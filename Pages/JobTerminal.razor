@@ -4,6 +4,7 @@
 @implements IAsyncDisposable
 @inject SessionManager Sessions
 @inject JobStore Store
+@inject LegionService Legion
 @inject IJSRuntime JS
 
 <PageTitle>@Name - AgentLegion</PageTitle>
@@ -15,6 +16,14 @@
     {
         <span class="badge bg-info text-dark" title="claude runs in Windows PowerShell">PowerShell</span>
     }
+    @if (Sessions.ResumedId(Name) is { } rid)
+    {
+        <span class="badge bg-light text-dark border" title="@($"Resumed Claude session {rid}")">이어서 · @ShortId(rid)</span>
+    }
+    else if (connecting)
+    {
+        <span class="text-muted small">세션 확인 중…</span>
+    }
     <div class="ms-auto d-flex gap-2">
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)
@@ -23,7 +32,8 @@
         }
         else
         {
-            <button class="btn btn-sm btn-primary" @onclick="RestartAsync">Start</button>
+            <button class="btn btn-sm btn-primary" disabled="@connecting" @onclick="() => RestartAsync(false)" title="마지막 대화를 이어서 시작합니다 (claude --resume)">Start</button>
+            <button class="btn btn-sm btn-outline-primary" disabled="@connecting" @onclick="() => RestartAsync(true)" title="새 대화로 시작합니다">New session</button>
         }
     </div>
 </div>
@@ -59,6 +69,7 @@ else if (!running && started)
 
     private bool running;
     private bool started;
+    private bool connecting;
     private bool disposed;
     private string? error;
     private TermSize size = new(120, 30);
@@ -88,17 +99,30 @@ else if (!running && started)
     }
 
     // Start the job's session (or re-attach to the running one) and stream its output into xterm.
-    private Task ConnectAsync()
+    // A new session continues the job's last Claude conversation unless `fresh` is set.
+    private async Task ConnectAsync(bool fresh = false)
     {
         error = null;
         try
         {
-            session = Sessions.GetOrStart(Name, size.Cols, size.Rows);
+            string? resumeId = null;
+            if (!fresh && !Sessions.IsRunning(Name) && Legion.LoadConfig() is { ResumeLastSession: true })
+            {
+                connecting = true;
+                await InvokeAsync(StateHasChanged);
+                // the id of the newest conversation in this job's folder (a file name on disk, so it survives restarts)
+                resumeId = (await Legion.GetLastSessionAsync(Name))?.Id;
+            }
+            session = Sessions.GetOrStart(Name, size.Cols, size.Rows, resumeId);
         }
         catch (Exception ex)
         {
             error = ex.Message;
-            return Task.CompletedTask;
+            return;
+        }
+        finally
+        {
+            connecting = false;
         }
 
         started = true;
@@ -112,7 +136,6 @@ else if (!running && started)
         session.Resize(size.Cols, size.Rows); // makes a full-screen app repaint for the new viewer
         session.Exited += OnSessionExited;
         StateHasChanged();
-        return Task.CompletedTask;
     }
 
     // Single consumer keeps chunks in order and merges bursts into fewer interop calls.
@@ -151,15 +174,17 @@ else if (!running && started)
         await Task.CompletedTask;
     }
 
-    private async Task RestartAsync()
+    private async Task RestartAsync(bool fresh)
     {
         Disconnect();
         Sessions.Stop(Name);
         await JS.InvokeVoidAsync("legionTerm.reset", termId);
         size = await JS.InvokeAsync<TermSize>("legionTerm.size", termId);
-        await ConnectAsync();
+        await ConnectAsync(fresh);
         await JS.InvokeVoidAsync("legionTerm.focus", termId);
     }
+
+    private static string ShortId(string id) => id.Length > 8 ? id[..8] : id;
 
     private void OnSessionExited() => OnSessionsChanged();
 

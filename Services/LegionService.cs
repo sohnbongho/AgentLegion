@@ -12,6 +12,9 @@ namespace AgentLegion.Services
 
     public record JobsResult(IReadOnlyList<JobInfo> Jobs, string? Error);
 
+    /// <summary>A job's most recent Claude conversation (the id that `claude --resume` takes).</summary>
+    public record LastSession(string Id, DateTime Modified, int SizeKb);
+
     public record CommandResult(bool Ok, string Output);
 
     /// <summary>Cumulative Claude token usage for a job, summed from its session transcripts.</summary>
@@ -24,7 +27,7 @@ namespace AgentLegion.Services
     /// <param name="WindowsJobsRoot">Where Windows PowerShell jobs live; null = the default %USERPROFILE%\agentjobs.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
         SessionStateDetection StateDetection = SessionStateDetection.Title,
-        string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude")
+        string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true)
     {
         public const string DefaultWindowsRoot = @"%USERPROFILE%\agentjobs";
 
@@ -82,7 +85,8 @@ namespace AgentLegion.Services
                     ? SessionStateDetection.Activity
                     : SessionStateDetection.Title;
                 return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude",
-                    detection, Str("windowsJobsRoot"), Str("windowsClaudeCmd") ?? "claude");
+                    detection, Str("windowsJobsRoot"), Str("windowsClaudeCmd") ?? "claude",
+                    !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False));
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -153,6 +157,15 @@ namespace AgentLegion.Services
             {
                 return (null, $"Unexpected output from legion.ps1: {ex.Message}");
             }
+        }
+
+        /// <summary>The job's newest Claude conversation, or null if it never had one (or it cannot be read).</summary>
+        public async Task<LastSession?> GetLastSessionAsync(string job)
+        {
+            var r = await RunAsync(DefaultTimeout, "last-session", job, "-Json");
+            if (!r.Ok || string.IsNullOrWhiteSpace(r.Output) || r.Output.Trim() == "null") return null;
+            try { return JsonSerializer.Deserialize<LastSession>(r.Output, JsonOptions); }
+            catch (JsonException) { return null; }
         }
 
         /// <summary>Jobs root as configured (e.g. ~/agentjobs), for displaying a job's folder.</summary>

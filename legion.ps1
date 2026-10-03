@@ -135,7 +135,7 @@ function Cmd-Init {
   $cfg['claudeCmd'] = if ($old) { Get-Opt $old 'claudeCmd' 'claude' } else { 'claude' }
   if ($WindowsRoot) { $cfg['windowsJobsRoot'] = $WindowsRoot }
   elseif ($old -and $old.PSObject.Properties['windowsJobsRoot']) { $cfg['windowsJobsRoot'] = $old.windowsJobsRoot }
-  foreach ($k in 'windowsClaudeCmd', 'stateDetection') {
+  foreach ($k in 'windowsClaudeCmd', 'stateDetection', 'resumeLastSession') {
     if ($old -and $old.PSObject.Properties[$k]) { $cfg[$k] = $old.$k }
   }
   $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
@@ -467,6 +467,50 @@ function Win-Usage($cfg) {
   } | ConvertTo-Json -Compress
 }
 
+# The job's most recent Claude conversation: <claude home>/projects/<encoded folder>/<session id>.jsonl.
+# Used to start `claude --resume <id>` so a restart continues where the job left off. Prints JSON or null.
+function Cmd-LastSession($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  $raw = if ((Get-JobTarget $cfg $Name) -eq 'windows') { Win-LastSession $cfg } else { Wsl-LastSession $cfg }
+  if ($Json) { $raw } else { $raw | ConvertFrom-Json | Format-List | Out-String | Write-Host }
+}
+
+function Win-LastSession($cfg) {
+  $dir = (Resolve-Path -LiteralPath (Require-WinJob $cfg)).ProviderPath
+  $claudeHome = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+  $proj = Join-Path (Join-Path $claudeHome 'projects') ($dir -replace '[^a-zA-Z0-9]', '-')
+  if (Test-Path -LiteralPath $proj) {
+    # newest transcript that holds an actual user message (an opened-and-closed session leaves no conversation)
+    foreach ($f in (Get-ChildItem -LiteralPath $proj -Filter '*.jsonl' -File | Sort-Object LastWriteTimeUtc -Descending)) {
+      if (Select-String -LiteralPath $f.FullName -Pattern '"type"\s*:\s*"user"' -Quiet) {
+        return ([pscustomobject]@{ id = $f.BaseName; modified = $f.LastWriteTimeUtc.ToString('o'); sizeKb = [int]($f.Length / 1KB) } | ConvertTo-Json -Compress)
+      }
+    }
+  }
+  'null'
+}
+
+function Wsl-LastSession($cfg) {
+  $script = "DIR=$($cfg.jobsRoot)/$Name`n" + @'
+cd "$DIR" 2>/dev/null || { echo "job not found" >&2; exit 1; }
+real=$(pwd -P)
+base=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+proj="$base/projects/$(printf '%s' "$real" | sed 's/[^a-zA-Z0-9]/-/g')"
+for f in $(ls -t "$proj"/*.jsonl 2>/dev/null); do
+  if grep -qE '"type"[[:space:]]*:[[:space:]]*"user"' "$f"; then
+    printf '{"id":"%s","epoch":%s,"sizeKb":%s}\n' "$(basename "$f" .jsonl)" "$(stat -c %Y "$f")" "$(( $(stat -c %s "$f") / 1024 ))"
+    exit 0
+  fi
+done
+echo null
+'@
+  $line = (Invoke-Wsl $cfg $script | Where-Object { $_ } | Select-Object -Last 1)
+  if (-not $line -or $line -eq 'null') { return 'null' }
+  $o = $line | ConvertFrom-Json
+  $mod = [DateTimeOffset]::FromUnixTimeSeconds([long]$o.epoch).UtcDateTime.ToString('o')
+  [pscustomobject]@{ id = $o.id; modified = $mod; sizeKb = $o.sizeKb } | ConvertTo-Json -Compress
+}
+
 function Cmd-Doctor($cfg) {
   $state = @{ fail = 0 }
   $winConfigured = [bool]$cfg.PSObject.Properties['windowsJobsRoot']
@@ -551,6 +595,7 @@ switch ($Command) {
   'run'       { Cmd-Run (Get-Config) }
   'doctor'    { Cmd-Doctor (Get-Config) }
   'usage'     { Cmd-Usage (Get-Config) }
+  'last-session' { Cmd-LastSession (Get-Config) }
   'diff'      { Cmd-Diff (Get-Config) }
   'push'      { Cmd-Push (Get-Config) }
   'merge'     { Cmd-Merge (Get-Config) }
@@ -570,6 +615,7 @@ AgentLegion commands:
   push <job>                    push the job branch to origin
   merge <job> [-Base main] [-Push]  --no-ff merge job branch into base (local; -Push pushes base)
   usage <job> [-Json]           Claude token usage for the job (from ~/.claude transcripts)
+  last-session <job> [-Json]    id of the job's most recent Claude conversation (for claude --resume)
   doctor [-Target windows]      check WSL / Windows, git, claude, repo access, claude auth
   remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host

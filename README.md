@@ -55,6 +55,12 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
   CLI: `.\legion.ps1 add unity1 -Target windows -Repo <url>` (그 외 명령은 job이 있는 환경을 자동으로 찾는다).
   Windows job의 토큰 사용량은 `%USERPROFILE%\.claude\projects`에서 집계한다(python 불필요).
 
+- **이어서 작업하기**: job을 시작하면(메뉴 클릭, Start) 그 job 폴더에서 **가장 최근에 한 Claude 대화를 `claude --resume <세션 ID>`로 이어서** 연다.
+  앱을 껐다 켜도 대화 기록은 디스크(`~/.claude/projects/<폴더>/<세션ID>.jsonl`)에 남아 있으므로 그대로 이어진다.
+  헤더에 `이어서 · <세션 ID 앞 8자>` 배지가 표시되고, **New session** 버튼으로 새 대화를 시작할 수 있다.
+  대화가 없는 job(메시지 없이 열었다 닫은 기록 포함)은 자동으로 새 대화로 시작한다. 끄려면 `legion.json`에 `"resumeLastSession": false`.
+  CLI: `.\legion.ps1 last-session <job> [-Json]` (WSL/Windows 모두).
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
