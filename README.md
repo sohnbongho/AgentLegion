@@ -68,6 +68,10 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
 - **터미널 열기**: **Terminal** 버튼은 그 job 폴더에서 **일반 셸**(WSL job은 WSL 셸, Windows job은 PowerShell)을 Windows Terminal 새 탭으로 연다
   (claude가 아니라 직접 명령을 칠 때 사용; `wt`가 없으면 일반 콘솔 창). 실행 중인 claude 세션에는 영향이 없다. CLI: `.\legion.ps1 shell <job>`.
 
+- **복사/붙여넣기**: 터미널에서 마우스로 선택한 뒤 `Ctrl+C`로 복사한다(선택이 없으면 `Ctrl+C`는 평소처럼 중단 신호).
+  `Ctrl+Shift+C`는 항상 복사만 하고 중단 신호를 보내지 않는다. 붙여넣기는 `Ctrl+V` 또는 `Ctrl+Shift+V`.
+  (`Ctrl+V`는 텍스트 붙여넣기에 쓰이므로 claude가 클립보드 이미지를 붙이는 단축키는 환경에 따라 다른 키를 써야 한다.)
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
