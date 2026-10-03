@@ -77,6 +77,9 @@ else if (!running && started)
         _ => "bg-secondary",
     };
 
+    private bool initialized;          // xterm exists and the first job is connected
+    private string? connectedName;      // the job the terminal is currently showing
+    private int generation;             // bumped on every detach, see PumpAsync
     private bool running;
     private bool started;
     private bool connecting;
@@ -100,6 +103,8 @@ else if (!running && started)
         try
         {
             size = await JS.InvokeAsync<TermSize>("legionTerm.init", termId, termEl, self);
+            initialized = true;
+            connectedName = Name;
             await ConnectAsync();
         }
         catch (JSDisconnectedException) { }
@@ -110,22 +115,53 @@ else if (!running && started)
         }
     }
 
+    // The router keeps this component instance when only {Name} changes (sidebar: job A -> job B), so
+    // OnAfterRender(firstRender) never runs again. Without this, the page header says B while the terminal
+    // stays attached to A - and keystrokes would go to A's session.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!initialized || disposed || Name == connectedName) return;
+        try { await SwitchJobAsync(); }
+        catch (JSDisconnectedException) { }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    // Leave the previous job's session running, detach from it, and show/start the new job's session.
+    private async Task SwitchJobAsync()
+    {
+        Disconnect();
+        connectedName = Name;
+        started = false;
+        error = null;
+        editorResult = null;
+        running = Sessions.IsRunning(Name);
+        await JS.InvokeVoidAsync("legionTerm.reset", termId);
+        size = await JS.InvokeAsync<TermSize>("legionTerm.size", termId);
+        await ConnectAsync();
+        await JS.InvokeVoidAsync("legionTerm.focus", termId);
+    }
+
     // Start the job's session (or re-attach to the running one) and stream its output into xterm.
     // A new session continues the job's last Claude conversation unless `fresh` is set.
     private async Task ConnectAsync(bool fresh = false)
     {
         error = null;
+        var job = Name; // the user may navigate to another job while we await below
         try
         {
             string? resumeId = null;
-            if (!fresh && !Sessions.IsRunning(Name) && Legion.LoadConfig() is { ResumeLastSession: true })
+            if (!fresh && !Sessions.IsRunning(job) && Legion.LoadConfig() is { ResumeLastSession: true })
             {
                 connecting = true;
                 await InvokeAsync(StateHasChanged);
                 // the id of the newest conversation in this job's folder (a file name on disk, so it survives restarts)
-                resumeId = (await Legion.GetLastSessionAsync(Name))?.Id;
+                resumeId = (await Legion.GetLastSessionAsync(job))?.Id;
             }
-            session = Sessions.GetOrStart(Name, size.Cols, size.Rows, resumeId);
+            if (disposed || job != Name) return; // moved on: the switch to the new job connects it
+            session = Sessions.GetOrStart(job, size.Cols, size.Rows, resumeId);
         }
         catch (Exception ex)
         {
@@ -140,7 +176,7 @@ else if (!running && started)
         started = true;
         running = session.IsRunning;
         pump = Channel.CreateUnbounded<byte[]>();
-        _ = PumpAsync(pump.Reader);
+        _ = PumpAsync(pump.Reader, generation);
 
         var ch = pump.Writer;
         listener = chunk => ch.TryWrite(chunk);
@@ -151,7 +187,8 @@ else if (!running && started)
     }
 
     // Single consumer keeps chunks in order and merges bursts into fewer interop calls.
-    private async Task PumpAsync(ChannelReader<byte[]> reader)
+    // A pump belongs to one attachment (`gen`); once the terminal moved to another job it must write nothing more.
+    private async Task PumpAsync(ChannelReader<byte[]> reader, int gen)
     {
         try
         {
@@ -159,6 +196,7 @@ else if (!running && started)
             {
                 using var ms = new MemoryStream();
                 while (ms.Length < 65536 && reader.TryRead(out var chunk)) ms.Write(chunk);
+                if (gen != generation) return;
                 await JS.InvokeVoidAsync("legionTerm.write", termId, Convert.ToBase64String(ms.ToArray()));
             }
         }
@@ -167,6 +205,7 @@ else if (!running && started)
 
     private void Disconnect()
     {
+        generation++; // invalidates the running pump
         if (session is not null)
         {
             if (listener is not null) session.Detach(listener);
