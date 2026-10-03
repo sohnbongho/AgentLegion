@@ -1,6 +1,91 @@
 @page "/settings"
+@using AgentLegion.Services
+@inject LegionService Legion
 
 <PageTitle>Settings - AgentLegion</PageTitle>
 
 <h1>Settings</h1>
-<p>배포판, jobs 루트, 기본 repo 설정이 여기에 표시됩니다. (준비 중)</p>
+
+@if (!Legion.IsConfigured)
+{
+    <div class="alert alert-info" role="alert">
+        아직 설정이 없습니다. 아래 값을 입력하고 저장하면 <code>legion.json</code>이 만들어집니다.
+    </div>
+}
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="distro">WSL distribution</label>
+    <input id="distro" class="form-control" list="distro-list" @bind="distro" placeholder="비워두면 기본 배포판" />
+    <datalist id="distro-list">
+        @foreach (var d in distros)
+        {
+            <option value="@d"></option>
+        }
+    </datalist>
+    <div class="form-text">claude와 git이 설치된 배포판. 설치된 목록: @(distros.Count == 0 ? "(조회 실패)" : string.Join(", ", distros))</div>
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="root">Jobs root (WSL 경로)</label>
+    <input id="root" class="form-control" @bind="jobsRoot" />
+    <div class="form-text">각 job이 <code>&lt;root&gt;/&lt;job&gt;</code>에 clone됩니다.</div>
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="repo">Default repo</label>
+    <input id="repo" class="form-control" @bind="repo" placeholder="git@github.com:me/proj.git" />
+    <div class="form-text">URL 또는 WSL 절대경로(<code>~</code>는 사용할 수 없음). job마다 따로 지정할 수도 있습니다.</div>
+</div>
+
+<button class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(jobsRoot))" @onclick="SaveAsync">
+    @(saving ? "Saving..." : "Save")
+</button>
+
+@if (result is not null)
+{
+    <div class="alert @(result.Ok ? "alert-success" : "alert-danger") mt-3" role="alert">
+        @if (result.Ok)
+        {
+            <span>저장했습니다. </span><a href="jobs">Jobs로 이동</a>
+        }
+        else
+        {
+            @result.Output
+        }
+    </div>
+}
+
+@code {
+    private string? distro;
+    private string jobsRoot = "~/agentjobs";
+    private string repo = "";
+    private IReadOnlyList<string> distros = Array.Empty<string>();
+    private bool saving;
+    private CommandResult? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var cfg = Legion.LoadConfig();
+        if (cfg is not null)
+        {
+            distro = cfg.Distro;
+            jobsRoot = cfg.JobsRoot;
+            repo = cfg.Repo;
+        }
+        distros = await Legion.GetDistrosAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        result = null;
+        try
+        {
+            result = await Legion.SaveConfigAsync(distro, jobsRoot, repo);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

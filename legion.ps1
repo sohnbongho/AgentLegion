@@ -55,7 +55,13 @@ function Cmd-Init {
   $root = if ($Root) { $Root } else { '~/agentjobs' }
   Assert-Safe $root '^[~/A-Za-z0-9_.-]+$' 'root'
   if ($Distro) { Assert-Safe $Distro '^[A-Za-z0-9_.-]+$' 'distro' }
-  [ordered]@{ distro = $Distro; jobsRoot = $root; repo = $Repo; claudeCmd = 'claude' } |
+  $claudeCmd = 'claude'
+  if (Test-Path $ConfigPath) {
+    # keep a customized claude command when re-running init
+    $old = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+    if ($old.claudeCmd) { $claudeCmd = $old.claudeCmd }
+  }
+  [ordered]@{ distro = $Distro; jobsRoot = $root; repo = $Repo; claudeCmd = $claudeCmd } |
     ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
   Write-Host "Wrote $ConfigPath"
 }
@@ -126,7 +132,7 @@ function Job-Prelude($cfg) {
   if ($Base) { Assert-Safe $Base '^[A-Za-z0-9._/-]+$' 'base' }
   @"
 set -e
-cd $($cfg.jobsRoot)/$Name
+cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 BR=`$(git rev-parse --abbrev-ref HEAD)
 BASE='$Base'
 [ -n "`$BASE" ] || BASE=`$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
@@ -188,7 +194,7 @@ function Cmd-Remove($cfg) {
   if (-not $Force) {
     # refuse if there are uncommitted changes or commits not present on any remote branch
     Invoke-Wsl $cfg @"
-cd $($cfg.jobsRoot)/$Name
+cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 [ -z "`$(git status --porcelain)" ] || { echo "uncommitted changes in $Name (use -Force to delete anyway)" >&2; exit 1; }
 [ -z "`$(git log --branches --not --remotes --oneline)" ] || { echo "unpushed commits in $Name (push/merge them or use -Force)" >&2; exit 1; }
 "@
@@ -197,6 +203,7 @@ cd $($cfg.jobsRoot)/$Name
   Write-Host "Removed $Name"
 }
 
+try {
 switch ($Command) {
   'init'      { Cmd-Init }
   'add'       { Cmd-Add (Get-Config) }
@@ -230,4 +237,8 @@ AgentLegion commands:
   remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host
   }
+}
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
 }

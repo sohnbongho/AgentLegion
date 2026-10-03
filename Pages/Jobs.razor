@@ -6,12 +6,49 @@
 
 <div class="d-flex align-items-center mb-3">
     <h1 class="me-auto mb-0">Jobs</h1>
-    <button class="btn btn-outline-primary" disabled="@loading" @onclick="LoadAsync">
+    <button class="btn btn-outline-primary" disabled="@(loading || busyJob is not null)" @onclick="LoadAsync">
         @(loading ? "Loading..." : "Refresh")
     </button>
 </div>
 
-@if (error is not null)
+@if (notConfigured)
+{
+    <div class="alert alert-info" role="alert">
+        먼저 <a href="settings">Settings</a>에서 WSL 배포판과 기본 repo를 설정하세요.
+    </div>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h2 class="h6 card-title">Add job</h2>
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-1" for="newName">Name</label>
+                    <input id="newName" class="form-control" @bind="newName" @bind:event="oninput" placeholder="job1" />
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-1" for="newBranch">Branch (optional)</label>
+                    <input id="newBranch" class="form-control" @bind="newBranch" placeholder="@(string.IsNullOrWhiteSpace(newName) ? "agent/<name>" : $"agent/{newName.Trim()}")" />
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small mb-1" for="newRepo">Repo (optional)</label>
+                    <input id="newRepo" class="form-control" @bind="newRepo" placeholder="기본 repo 사용" />
+                </div>
+                <div class="col-12 col-md-2">
+                    <button class="btn btn-success w-100" disabled="@(busyJob is not null || string.IsNullOrWhiteSpace(newName))" @onclick="AddJobAsync">
+                        @(busyAction == "Add" ? "Adding..." : "Add")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (notConfigured)
+{
+}
+else if (error is not null)
 {
     <div class="alert alert-danger" role="alert">@error</div>
 }
@@ -21,34 +58,69 @@ else if (loading && jobs is null)
 }
 else if (jobs is { Count: 0 })
 {
-    <p class="text-muted">No jobs yet. Create one with <code>.\legion.ps1 add job1</code>.</p>
+    <p class="text-muted">No jobs yet. 위의 Add job 폼으로 만들 수 있습니다.</p>
 }
 else if (jobs is not null)
 {
-    <table class="table align-middle">
-        <thead>
-            <tr><th>Job</th><th>Branch</th><th class="text-end">Changes</th></tr>
-        </thead>
-        <tbody>
-            @foreach (var j in jobs)
-            {
-                <tr>
-                    <td>@j.Job</td>
-                    <td><code>@j.Branch</code></td>
-                    <td class="text-end">
-                        @if (j.Changes == 0)
-                        {
-                            <span class="badge bg-success">clean</span>
-                        }
-                        else
-                        {
-                            <span class="badge bg-warning text-dark">@j.Changes modified</span>
-                        }
-                    </td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr><th>Job</th><th>Branch</th><th>Changes</th><th class="text-end">Actions</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var j in jobs)
+                {
+                    var busy = busyJob is not null;
+                    <tr>
+                        <td>@j.Job</td>
+                        <td><code>@j.Branch</code></td>
+                        <td>
+                            @if (j.Changes == 0)
+                            {
+                                <span class="badge bg-success">clean</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning text-dark">@j.Changes modified</span>
+                            }
+                        </td>
+                        <td class="text-end text-nowrap">
+                            @if (busyJob == j.Job)
+                            {
+                                <span class="text-muted me-2">@busyAction...</span>
+                            }
+                            <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="() => StartJob(j.Job)">Start</button>
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => DiffJob(j.Job)">Diff</button>
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => PushJob(j.Job)">Push</button>
+                            @if (confirmRemove == j.Job)
+                            {
+                                <button class="btn btn-sm btn-danger" disabled="@busy" @onclick="() => RemoveAsync(j.Job)">Confirm remove</button>
+                                <button class="btn btn-sm btn-link" @onclick="() => confirmRemove = null">Cancel</button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-danger" disabled="@busy" @onclick="() => confirmRemove = j.Job">Remove</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@if (result is not null)
+{
+    <div class="card mt-3">
+        <div class="card-header d-flex align-items-center">
+            <span class="me-auto">
+                <span class="badge @(result.Ok ? "bg-success" : "bg-danger") me-2">@(result.Ok ? "OK" : "Failed")</span>
+                @resultTitle
+            </span>
+            <button class="btn btn-sm btn-link" @onclick="() => result = null">Close</button>
+        </div>
+        <pre class="card-body mb-0" style="white-space: pre-wrap;">@(string.IsNullOrWhiteSpace(result.Output) ? "(no output)" : result.Output)</pre>
+    </div>
 }
 
 @code {
@@ -56,15 +128,70 @@ else if (jobs is not null)
     private string? error;
     private bool loading;
 
+    private string? busyJob;
+    private string? busyAction;
+    private string? confirmRemove;
+    private CommandResult? result;
+    private string? resultTitle;
+
     protected override Task OnInitializedAsync() => LoadAsync();
+
+    private bool notConfigured;
+    private string newName = "";
+    private string? newBranch;
+    private string? newRepo;
+
+    private async Task AddJobAsync()
+    {
+        var name = newName.Trim();
+        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo));
+        if (result is { Ok: true })
+        {
+            newName = "";
+            newBranch = newRepo = null;
+            await LoadAsync();
+        }
+    }
 
     private async Task LoadAsync()
     {
+        notConfigured = !Legion.IsConfigured;
+        if (notConfigured)
+        {
+            jobs = null;
+            return;
+        }
         loading = true;
         error = null;
-        var result = await Legion.GetJobsAsync();
-        jobs = result.Jobs;
-        error = result.Error;
+        var r = await Legion.GetJobsAsync();
+        jobs = r.Jobs;
+        error = r.Error;
         loading = false;
+    }
+
+    private async Task RunAsync(string job, string action, Func<string, Task<CommandResult>> call)
+    {
+        confirmRemove = null;
+        busyJob = job;
+        busyAction = action;
+        try
+        {
+            result = await call(job);
+            resultTitle = $"{action} {job}";
+        }
+        finally
+        {
+            busyJob = busyAction = null;
+        }
+    }
+
+    private Task StartJob(string job) => RunAsync(job, "Start", Legion.StartAsync);
+    private Task DiffJob(string job) => RunAsync(job, "Diff", Legion.DiffAsync);
+    private Task PushJob(string job) => RunAsync(job, "Push", Legion.PushAsync);
+
+    private async Task RemoveAsync(string job)
+    {
+        await RunAsync(job, "Remove", Legion.RemoveAsync);
+        if (result is { Ok: true }) await LoadAsync();
     }
 }
