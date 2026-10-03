@@ -38,6 +38,12 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
   토큰은 WSL의 `~/.claude/projects/<폴더>/*.jsonl` 대화 기록을 합산한 값이며(`legion.ps1 usage <job>`, WSL에 `python3` 필요),
   표시값은 input + output + cache write이고 cache read는 따로 보여 준다.
 
+- **상태 표시**(사이드바/Jobs/터미널 헤더): `진행 중` / `응답 대기` / `중지`.
+  Claude Code가 터미널 제목(OSC 0)으로 내보내는 상태를 읽는다: 작업 중에는 `◐`/`◑`가 교대로, 대기·질문 중에는 `✳`가 붙는다.
+  화면 갱신 방식이나 탭을 열어 두었는지와 무관하게 동작한다. 전환 기록은 `logs/session-state.log`에 남는다.
+  `legion.json`의 `"stateDetection": "activity"`로 바꾸면 Claude가 아닌 프로그램용으로 "출력이 계속 나오면 진행 중"으로 판정한다.
+  (제목이 꺼진 환경 — `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, 상태 접두어를 쓰지 않는 설정 — 에서는 항상 `응답 대기`로 보일 수 있다.)
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`

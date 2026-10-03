@@ -80,3 +80,7 @@ a, .btn-link {
 .terminal-host .xterm-viewport {
     background-color: #0b1020 !important;
 }
+
+.terminal-host .xterm-viewport {
+    scrollbar-color: #3b4261 #0b1020;
+}

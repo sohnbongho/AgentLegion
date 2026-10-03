@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace AgentLegion.Services
 {
-    public record JobInfo(string Job, string Branch, int Changes);
+    /// <param name="Repo">The job's origin URL (credentials already stripped), empty if it has no remote.</param>
+    public record JobInfo(string Job, string Branch, int Changes, string? Repo = null);
 
     public record JobsResult(IReadOnlyList<JobInfo> Jobs, string? Error);
 
@@ -17,7 +18,8 @@ namespace AgentLegion.Services
         public long Billable => Input + Output + CacheCreate;
     }
 
-    public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude");
+    public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
+        SessionStateDetection StateDetection = SessionStateDetection.Title);
 
     /// <summary>Thin wrapper that runs legion.ps1 and parses its output.</summary>
     public class LegionService
@@ -52,6 +54,9 @@ namespace AgentLegion.Services
 
         public bool IsConfigured => File.Exists(ConfigPath);
 
+        /// <summary>Folder next to legion.ps1; used for diagnostics logs.</summary>
+        public string DataDir => Path.GetDirectoryName(_scriptPath)!;
+
         /// <summary>Reads legion.json, or null if it is missing or unreadable.</summary>
         public LegionConfig? LoadConfig()
         {
@@ -60,7 +65,11 @@ namespace AgentLegion.Services
                 using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
                 var root = doc.RootElement;
                 string? Str(string name) => root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
-                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude");
+                // "title" (default) reads Claude Code's status title; "activity" treats flowing output as work
+                var detection = string.Equals(Str("stateDetection"), "activity", StringComparison.OrdinalIgnoreCase)
+                    ? SessionStateDetection.Activity
+                    : SessionStateDetection.Title;
+                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude", detection);
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {

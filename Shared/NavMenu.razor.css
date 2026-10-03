@@ -139,14 +139,7 @@
     border-radius: 50%;
 }
 
-.job-dot.running {
-    background: #4ade80;
-    box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
-}
 
-.job-dot.idle {
-    background: rgba(255, 255, 255, 0.25);
-}
 
 .nav-label {
     overflow: hidden;
@@ -162,4 +155,51 @@
     background: rgba(251, 191, 36, 0.25);
     color: #fbbf24;
     font-size: 0.7rem;
+}
+
+.job-dot.working {
+    background: #6ea8fe;
+    box-shadow: 0 0 6px rgba(110, 168, 254, 0.8);
+    animation: job-pulse 1.2s ease-in-out infinite;
+}
+
+.job-dot.waiting {
+    background: #fbbf24;
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.7);
+}
+
+.job-dot.stopped {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+@keyframes job-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+.job-state {
+    margin-left: auto;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    white-space: nowrap;
+}
+
+.job-state.working {
+    background: rgba(110, 168, 254, 0.2);
+    color: #9ec5fe;
+}
+
+.job-state.waiting {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.job-state.stopped {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* the change count sits right after the state pill */
+.job-state + .job-changes {
+    margin-left: 0.4rem;
 }

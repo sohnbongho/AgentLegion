@@ -13,6 +13,12 @@
         <span class="chip" title="Git branch">
             <span class="oi oi-fork" aria-hidden="true"></span> @(Branch ?? "…")
         </span>
+        @if (!string.IsNullOrEmpty(Repo))
+        {
+            <span class="chip" title="@($"Repository (origin): {Repo}")">
+                <span class="oi oi-link-intact" aria-hidden="true"></span> @ShortRepo(Repo)
+            </span>
+        }
         <span class="chip" title="Folder (WSL)">
             <span class="oi oi-folder" aria-hidden="true"></span> @Folder
         </span>
@@ -41,6 +47,17 @@
     private CancellationTokenSource? loopCts;
 
     private string? Branch => Store.Jobs.FirstOrDefault(j => j.Job == job)?.Branch;
+    private string? Repo => Store.Jobs.FirstOrDefault(j => j.Job == job)?.Repo;
+
+    // https://github.com/org/proj.git -> org/proj, git@host:org/proj.git -> org/proj, /home/me/x/y -> x/y
+    private static string ShortRepo(string url)
+    {
+        var s = url.Trim().TrimEnd('/');
+        if (s.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) s = s[..^4];
+        var parts = s.Split(new[] { '/', ':' }, StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : s;
+    }
+
     private string Folder => $"{Legion.JobsRoot.TrimEnd('/')}/{job}";
 
     private string UsageTooltip => usage is null
@@ -130,12 +147,13 @@
             : null;
     }
 
-    private static string Fmt(long n) => n switch
+    // Plain ifs: a line starting with '<' inside @code is parsed as an HTML tag by Visual Studio's Razor compiler.
+    private static string Fmt(long n)
     {
-        < 1_000 => n.ToString(),
-        < 1_000_000 => $"{n / 1_000d:0.#}k",
-        _ => $"{n / 1_000_000d:0.##}M",
-    };
+        if (n >= 1_000_000) return $"{n / 1_000_000d:0.##}M";
+        if (n >= 1_000) return $"{n / 1_000d:0.#}k";
+        return n.ToString();
+    }
 
     public void Dispose()
     {

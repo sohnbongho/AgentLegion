@@ -3,3 +3,4 @@ legion.json
 bin/
 obj/
 *.user
+logs/

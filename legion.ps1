@@ -56,13 +56,17 @@ function Cmd-Init {
   Assert-Safe $root '^[~/A-Za-z0-9_.-]+$' 'root'
   if ($Distro) { Assert-Safe $Distro '^[A-Za-z0-9_.-]+$' 'distro' }
   $claudeCmd = 'claude'
+  $cfg = [ordered]@{ distro = $Distro; jobsRoot = $root; repo = $Repo }
+  $detect = $null
   if (Test-Path $ConfigPath) {
-    # keep a customized claude command when re-running init
+    # keep hand-edited settings when re-running init
     $old = Get-Content $ConfigPath -Raw | ConvertFrom-Json
     if ($old.claudeCmd) { $claudeCmd = $old.claudeCmd }
+    $detect = $old.PSObject.Properties['stateDetection']
   }
-  [ordered]@{ distro = $Distro; jobsRoot = $root; repo = $Repo; claudeCmd = $claudeCmd } |
-    ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
+  $cfg['claudeCmd'] = $claudeCmd
+  if ($detect) { $cfg['stateDetection'] = $detect.Value }
+  $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
   Write-Host "Wrote $ConfigPath"
 }
 
@@ -92,12 +96,15 @@ for d in */; do
   [ -d "`$d/.git" ] || continue
   b=`$(git -C "`$d" rev-parse --abbrev-ref HEAD)
   n=`$(git -C "`$d" status --porcelain | wc -l)
-  printf '%s\t%s\t%s\n' "`$d" "`$b" "`$n"
+  r=`$(git -C "`$d" remote get-url origin 2>/dev/null || true)
+  printf '%s\t%s\t%s\t%s\n' "`$d" "`$b" "`$n" "`$r"
 done
 "@
   $jobs = @($lines | Where-Object { $_ } | ForEach-Object {
     $f = $_ -split "`t"
-    [pscustomobject]@{ Job = $f[0]; Branch = $f[1]; Changes = [int]$f[2] }
+    # drop credentials embedded in the URL (https://user:token@host/...) before they reach any UI
+    $repo = if ($f.Count -gt 3) { $f[3] -replace '://[^/@]*@', '://' } else { '' }
+    [pscustomobject]@{ Job = $f[0]; Branch = $f[1]; Changes = [int]$f[2]; Repo = $repo }
   })
   if ($Json) { ConvertTo-Json -InputObject $jobs -Compress }
   elseif ($jobs.Count -eq 0) { Write-Host 'no jobs yet' }

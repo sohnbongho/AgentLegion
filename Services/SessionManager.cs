@@ -16,9 +16,59 @@ namespace AgentLegion.Services
         private readonly object _gate = new();
         private readonly Dictionary<string, PtySession> _sessions = new();
 
-        public SessionManager(LegionService legion) => _legion = legion;
+        private readonly Dictionary<string, SessionState> _lastStates = new();
+        private readonly Timer _poll;
 
-        /// <summary>Raised when any session starts or ends (used by the sidebar to show status).</summary>
+        public SessionManager(LegionService legion)
+        {
+            _legion = legion;
+            _poll = new Timer(_ => PollStates(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+
+        public SessionState GetState(string job)
+        {
+            lock (_gate) return _sessions.TryGetValue(job, out var s) ? s.State : SessionState.Stopped;
+        }
+
+        // State depends on output timing, so it has to be sampled; notify only on actual transitions.
+        private void PollStates()
+        {
+            var transitions = new List<string>();
+            lock (_gate)
+            {
+                var now = _sessions.ToDictionary(kv => kv.Key, kv => kv.Value.State);
+                foreach (var (job, state) in now)
+                {
+                    var before = _lastStates.TryGetValue(job, out var b) ? b : SessionState.Stopped;
+                    if (before != state)
+                        transitions.Add($"{job} {before}->{state} | last activity: {_sessions[job].LastActivityPreview}");
+                }
+                var changed = transitions.Count > 0 || _lastStates.Keys.Except(now.Keys).Any();
+                if (!changed) return;
+                _lastStates.Clear();
+                foreach (var kv in now) _lastStates[kv.Key] = kv.Value;
+            }
+            LogTransitions(transitions);
+            Changed?.Invoke();
+        }
+
+        // Small diagnostics file so a misleading state can be traced to the output that caused it.
+        private void LogTransitions(List<string> lines)
+        {
+            if (lines.Count == 0) return;
+            try
+            {
+                var dir = Path.Combine(_legion.DataDir, "logs");
+                Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir, "session-state.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 512 * 1024) File.Delete(path);
+                File.AppendAllLines(path, lines.Select(l => $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {l}"));
+            }
+            catch (IOException) { /* diagnostics must never break the UI */ }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        /// <summary>Raised when any session starts, ends or changes state (used by the sidebar).</summary>
         public event Action? Changed;
 
         public bool IsRunning(string job)
@@ -39,7 +89,8 @@ namespace AgentLegion.Services
             {
                 if (_sessions.TryGetValue(job, out var existing) && existing.IsRunning) return existing;
                 existing?.Dispose();
-                session = PtySession.Start(BuildCommandLine(job), cols, rows);
+                var cfg = _legion.LoadConfig() ?? throw new InvalidOperationException("Not configured. Set up Settings first.");
+                session = PtySession.Start(BuildCommandLine(job, cfg), cols, rows, cfg.StateDetection);
                 _sessions[job] = session;
             }
             session.Exited += () => Changed?.Invoke();
@@ -58,10 +109,9 @@ namespace AgentLegion.Services
             Changed?.Invoke();
         }
 
-        private string BuildCommandLine(string job)
+        private static string BuildCommandLine(string job, LegionConfig cfg)
         {
             if (!JobName.IsMatch(job)) throw new ArgumentException($"Invalid job name: '{job}'");
-            var cfg = _legion.LoadConfig() ?? throw new InvalidOperationException("Not configured. Set up Settings first.");
             if (!RootPath.IsMatch(cfg.JobsRoot)) throw new InvalidOperationException($"Invalid jobs root: '{cfg.JobsRoot}'");
 
             var distro = "";
@@ -77,6 +127,7 @@ namespace AgentLegion.Services
 
         public void Dispose()
         {
+            _poll.Dispose();
             PtySession[] all;
             lock (_gate)
             {

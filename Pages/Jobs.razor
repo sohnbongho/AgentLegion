@@ -70,7 +70,8 @@ else
                     @foreach (var j in Store.Jobs)
                     {
                         var busy = busyJob is not null;
-                        var live = Sessions.IsRunning(j.Job);
+                        var state = Sessions.GetState(j.Job);
+                        var live = state != SessionState.Stopped;
                         <tr>
                             <td><a href="@($"jobs/{j.Job}")">@j.Job</a></td>
                             <td><code>@j.Branch</code></td>
@@ -85,7 +86,7 @@ else
                                 }
                             </td>
                             <td>
-                                <span class="badge @(live ? "bg-success" : "bg-secondary")">@(live ? "running" : "stopped")</span>
+                                <span class="badge @StateBadge(state)">@state.Label()</span>
                             </td>
                             <td class="text-end text-nowrap">
                                 @if (busyJob == j.Job)
@@ -132,6 +133,13 @@ else
 }
 
 @code {
+    private static string StateBadge(SessionState s) => s switch
+    {
+        SessionState.Working => "bg-primary",
+        SessionState.Waiting => "bg-warning text-dark",
+        _ => "bg-secondary",
+    };
+
     private bool loading;
     private bool disposed;
 

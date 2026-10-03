@@ -29,10 +29,12 @@
             <div class="nav-section">Agents</div>
             @foreach (var job in Store.Jobs)
             {
+                var state = Sessions.GetState(job.Job);
                 <div class="nav-item">
-                    <NavLink class="nav-link" href="@($"jobs/{job.Job}")" title="@job.Branch">
-                        <span class="job-dot @(Sessions.IsRunning(job.Job) ? "running" : "idle")" aria-hidden="true"></span>
+                    <NavLink class="nav-link" href="@($"jobs/{job.Job}")" title="@($"{job.Branch} · {state.Label()}")">
+                        <span class="job-dot @state.Css()" aria-hidden="true"></span>
                         <span class="nav-label">@job.Job</span>
+                        <span class="job-state @state.Css()">@state.Label()</span>
                         @if (job.Changes > 0)
                         {
                             <span class="job-changes" title="@job.Changes uncommitted changes">@job.Changes</span>

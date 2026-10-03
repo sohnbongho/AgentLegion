@@ -10,7 +10,7 @@
 
 <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
     <h1 class="h3 mb-0 me-2">@Name</h1>
-    <span class="badge @(running ? "bg-success" : "bg-secondary")">@(running ? "running" : "stopped")</span>
+    <span class="badge @StateBadge(Sessions.GetState(Name))">@Sessions.GetState(Name).Label()</span>
     <div class="ms-auto d-flex gap-2">
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)
@@ -46,6 +46,13 @@ else if (!running && started)
     private Action<byte[]>? listener;
     private Channel<byte[]>? pump;
     private readonly string termId = Guid.NewGuid().ToString("N");
+    private static string StateBadge(SessionState s) => s switch
+    {
+        SessionState.Working => "bg-primary",
+        SessionState.Waiting => "bg-warning text-dark",
+        _ => "bg-secondary",
+    };
+
     private bool running;
     private bool started;
     private bool disposed;

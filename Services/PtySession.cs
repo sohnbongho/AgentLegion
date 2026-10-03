@@ -2,10 +2,45 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 
 namespace AgentLegion.Services
 {
+    public enum SessionState
+    {
+        Stopped,
+        /// <summary>Output is flowing (e.g. Claude's spinner): the agent is busy.</summary>
+        Working,
+        /// <summary>Running but silent: the agent is waiting for the user.</summary>
+        Waiting,
+    }
+
+    public enum SessionStateDetection
+    {
+        /// <summary>Read Claude Code's terminal title (◐/◑ = busy, ✳ = idle).</summary>
+        Title,
+        /// <summary>Treat continuing output as work. For programs that don't publish a status title.</summary>
+        Activity,
+    }
+
+    public static class SessionStateExtensions
+    {
+        public static string Label(this SessionState s) => s switch
+        {
+            SessionState.Working => "진행 중",
+            SessionState.Waiting => "응답 대기",
+            _ => "중지",
+        };
+
+        public static string Css(this SessionState s) => s switch
+        {
+            SessionState.Working => "working",
+            SessionState.Waiting => "waiting",
+            _ => "stopped",
+        };
+    }
+
     /// <summary>
     /// One interactive process attached to a Windows pseudo console (ConPTY).
     /// Output is kept in a bounded buffer so a browser can re-attach later and see the screen.
@@ -13,6 +48,83 @@ namespace AgentLegion.Services
     public sealed class PtySession : IDisposable
     {
         private const int MaxBufferBytes = 256 * 1024;
+
+        // How the session decides between Working and Waiting.
+        //  Title:    Claude Code puts its status in the terminal title (OSC 0): a rotating glyph while busy, a
+        //            static one while idle/asking. That signal is independent of screen repaints, so it is right
+        //            even when nobody is viewing the session.
+        //  Activity: fallback for other programs: output flowing = working (flaps if an idle program repaints).
+        private SessionStateDetection _detection = SessionStateDetection.Title;
+        private bool _titleBusy;
+        private volatile bool _sawStatusTitle;
+        private readonly long _startedAt = Environment.TickCount64;
+        // If the program never publishes a status title (titles disabled, or not Claude), don't stay on
+        // "Waiting" forever: after this long, fall back to judging by output activity.
+        private const long TitleGraceMs = 20_000;
+
+        private const long WorkingWindowMs = 2500; // Activity mode only
+        private const long EchoWindowMs = 500;     // keystroke echo is not agent activity
+        private const long RepaintWindowMs = 1500; // nor is the repaint after a resize
+
+        private long _lastActivity = Environment.TickCount64;
+        private long _ignoreUntil;
+
+        private static readonly Regex OscTitle = new(@"\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)", RegexOptions.Compiled);
+        private string _oscCarry = "";
+
+        /// <summary>What last changed the state (title text or output preview), for diagnostics.</summary>
+        public string LastActivityPreview { get; private set; } = "";
+
+        private void TrackActivity(byte[] chunk)
+        {
+            var text = Encoding.UTF8.GetString(chunk);
+            // Always record output activity too: it is the fallback when no status title ever shows up.
+            TrackOutputActivity(text);
+            if (_detection == SessionStateDetection.Title) TrackTitle(text);
+        }
+
+        private void TrackOutputActivity(string text)
+        {
+            var now = Environment.TickCount64;
+            if (now < Volatile.Read(ref _ignoreUntil)) return;
+            Volatile.Write(ref _lastActivity, now);
+            if (_detection == SessionStateDetection.Activity) LastActivityPreview = Preview(text);
+        }
+
+        private void TrackTitle(string text)
+        {
+            // A title sequence can be split across reads; keep an unfinished one for the next chunk.
+            var data = _oscCarry + text;
+            foreach (Match m in OscTitle.Matches(data))
+            {
+                var title = m.Groups[1].Value.TrimStart();
+                var busy = ClassifyTitle(title);
+                if (busy is null) continue; // not Claude's title (e.g. the wsl.exe window title)
+                _titleBusy = busy.Value;
+                _sawStatusTitle = true;
+                LastActivityPreview = $"title=\"{title}\"";
+            }
+            var open = data.LastIndexOf("\u001b]", StringComparison.Ordinal);
+            var closed = OscTitle.Match(data[(open < 0 ? 0 : open)..]).Success;
+            _oscCarry = open >= 0 && !closed && data.Length - open < 512 ? data[open..] : "";
+        }
+
+        // Claude Code: "◐ title" / "◑ title" while busy, "✳ title" otherwise. Older builds use braille spinners.
+        private static bool? ClassifyTitle(string title)
+        {
+            if (title.Length == 0) return null;
+            var c = title[0];
+            if (c is '\u25D0' or '\u25D1' or '\u25D2' or '\u25D3') return true;
+            if (c >= '\u2800' && c <= '\u28FF') return true;
+            if (c == '\u2733') return false;
+            return null;
+        }
+
+        private static string Preview(string text)
+        {
+            var t = text.Replace("\u001b", "<E>").Replace("\r", "\r").Replace("\n", "\n");
+            return t.Length > 120 ? t[..120] + "..." : t;
+        }
 
         private readonly object _gate = new();
         private readonly List<byte> _buffer = new();
@@ -25,13 +137,28 @@ namespace AgentLegion.Services
         private bool _disposed;
 
         public bool IsRunning { get; private set; }
+
+        public SessionState State
+        {
+            get
+            {
+                if (!IsRunning) return SessionState.Stopped;
+                var titleMode = _detection == SessionStateDetection.Title &&
+                                (_sawStatusTitle || Environment.TickCount64 - _startedAt < TitleGraceMs);
+                if (titleMode)
+                    return Volatile.Read(ref _titleBusy) ? SessionState.Working : SessionState.Waiting;
+                var idleMs = Environment.TickCount64 - Volatile.Read(ref _lastActivity);
+                return idleMs < WorkingWindowMs ? SessionState.Working : SessionState.Waiting;
+            }
+        }
         public int? ExitCode { get; private set; }
         public event Action? Exited;
 
         /// <summary>Starts <paramref name="commandLine"/> in a new pseudo console of the given size.</summary>
-        public static PtySession Start(string commandLine, int cols, int rows)
+        public static PtySession Start(string commandLine, int cols, int rows,
+            SessionStateDetection detection = SessionStateDetection.Title)
         {
-            var s = new PtySession();
+            var s = new PtySession { _detection = detection };
             try { s.StartCore(commandLine, cols, rows); }
             catch { s.Dispose(); throw; }
             return s;
@@ -101,6 +228,7 @@ namespace AgentLegion.Services
                 {
                     var chunk = new byte[n];
                     Array.Copy(buf, chunk, n);
+                    TrackActivity(chunk);
                     Action<byte[]>[] targets;
                     lock (_gate)
                     {
@@ -156,6 +284,7 @@ namespace AgentLegion.Services
         public void Write(string text)
         {
             if (!IsRunning || _input is null) return;
+            Volatile.Write(ref _ignoreUntil, Environment.TickCount64 + EchoWindowMs);
             var bytes = Encoding.UTF8.GetBytes(text);
             try
             {
@@ -171,6 +300,7 @@ namespace AgentLegion.Services
         public void Resize(int cols, int rows)
         {
             if (!IsRunning || _hPc == IntPtr.Zero || cols <= 0 || rows <= 0) return;
+            Volatile.Write(ref _ignoreUntil, Environment.TickCount64 + RepaintWindowMs);
             NativePty.ResizePseudoConsole(_hPc, new NativePty.COORD { X = (short)cols, Y = (short)rows });
         }
 
