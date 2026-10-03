@@ -4,6 +4,7 @@
 @inject LegionService Legion
 @inject JobStore Store
 @inject SessionManager Sessions
+@inject NavigationManager Nav
 
 <PageTitle>Jobs - AgentLegion</PageTitle>
 
@@ -109,6 +110,15 @@ else
                                 {
                                     <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => StopSession(j.Job)">Stop</button>
                                 }
+                                @if (confirmNew == j.Job)
+                                {
+                                    <button class="btn btn-sm btn-warning" disabled="@busy" @onclick="() => NewSession(j.Job)" title="실행 중인 세션을 종료하고 새 대화로 시작">종료 후 새 대화</button>
+                                    <button class="btn btn-sm btn-link" @onclick="() => confirmNew = null">Cancel</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-primary" disabled="@busy" @onclick="() => NewSession(j.Job)" title="새 대화로 시작하고 터미널을 엽니다">New session</button>
+                                }
                                 <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => DiffJob(j.Job)">Diff</button>
                                 <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => PushJob(j.Job)">Push</button>
                                 @if (confirmRemove == j.Job)
@@ -162,6 +172,31 @@ else
     private string? busyJob;
     private string? busyAction;
     private string? confirmRemove;
+    private string? confirmNew;
+
+    // Start a fresh conversation for the job and open its terminal. Ending a running session asks first.
+    private void NewSession(string job)
+    {
+        if (Sessions.IsRunning(job) && confirmNew != job)
+        {
+            confirmNew = job;
+            return;
+        }
+        confirmNew = null;
+        confirmRemove = null;
+        try
+        {
+            Sessions.Stop(job);
+            Sessions.GetOrStart(job, 120, 30, null); // no resume id: a new conversation; the terminal page attaches and resizes
+        }
+        catch (Exception ex)
+        {
+            result = new CommandResult(false, ex.Message);
+            resultTitle = $"New session {job}";
+            return;
+        }
+        Nav.NavigateTo($"jobs/{job}");
+    }
     private string? editingJob;
 
     private void ToggleEdit(string job) => editingJob = editingJob == job ? null : job;

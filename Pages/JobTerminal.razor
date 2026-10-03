@@ -37,10 +37,22 @@
         else
         {
             <button class="btn btn-sm btn-primary" disabled="@connecting" @onclick="() => RestartAsync(false)" title="마지막 대화를 이어서 시작합니다 (claude --resume)">Start</button>
-            <button class="btn btn-sm btn-outline-primary" disabled="@connecting" @onclick="() => RestartAsync(true)" title="새 대화로 시작합니다">New session</button>
         }
+        <button class="btn btn-sm @(confirmNew ? "btn-warning" : "btn-outline-primary")" disabled="@connecting" @onclick="NewSessionAsync"
+                title="새 대화로 시작합니다. 실행 중이면 현재 세션을 종료하고 시작합니다.">New session</button>
     </div>
 </div>
+
+@if (confirmNew)
+{
+    <div class="alert alert-warning py-2 d-flex align-items-center gap-2" role="alert">
+        <span class="me-auto">
+            실행 중인 세션을 <strong>종료하고 새 대화로 시작</strong>합니다. 지금 대화는 Claude 기록에 남아 있어 나중에 직접 다시 열 수 있습니다.
+        </span>
+        <button class="btn btn-sm btn-warning" @onclick="NewSessionAsync">새 대화로 시작</button>
+        <button class="btn btn-sm btn-link text-nowrap" @onclick="() => confirmNew = false">취소</button>
+    </div>
+}
 
 @if (showEditor && Store.Jobs.FirstOrDefault(x => x.Job == Name) is { } editing)
 {
@@ -92,6 +104,7 @@ else if (!running && started)
     private bool connecting;
     private bool openingEditor;
     private bool showEditor;
+    private bool confirmNew;           // "end the running session and start a new conversation?" is showing
     private CommandResult? editorResult;
     private bool disposed;
     private string? error;
@@ -142,6 +155,7 @@ else if (!running && started)
     {
         Disconnect();
         connectedName = Name;
+        confirmNew = false; // a pending "end this session?" belonged to the job we just left
         started = false;
         error = null;
         editorResult = null;
@@ -233,8 +247,21 @@ else if (!running && started)
         await Task.CompletedTask;
     }
 
+    // New conversation. A running session is ended, so the first click only asks for confirmation.
+    private async Task NewSessionAsync()
+    {
+        if (Sessions.IsRunning(Name) && !confirmNew)
+        {
+            confirmNew = true;
+            return;
+        }
+        confirmNew = false;
+        await RestartAsync(true);
+    }
+
     private async Task RestartAsync(bool fresh)
     {
+        confirmNew = false;
         Disconnect();
         Sessions.Stop(Name);
         await JS.InvokeVoidAsync("legionTerm.reset", termId);
