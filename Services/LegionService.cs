@@ -12,6 +12,9 @@ namespace AgentLegion.Services
 
     public record JobsResult(IReadOnlyList<JobInfo> Jobs, string? Error);
 
+    /// <summary>A job renamed or moved by `edit`: its environment ("wsl" / "windows") and absolute folder.</summary>
+    public record RegisteredJob(string Env, string Path);
+
     /// <summary>A job's most recent Claude conversation (the id that `claude --resume` takes).</summary>
     public record LastSession(string Id, DateTime Modified, int SizeKb);
 
@@ -173,6 +176,47 @@ namespace AgentLegion.Services
 
         /// <summary>Runs `code .` in the job folder (WSL jobs through WSL, Windows jobs on Windows).</summary>
         public Task<CommandResult> OpenEditorAsync(string job) => RunAsync(NetworkTimeout, "code", job);
+
+        private static readonly TimeSpan MoveTimeout = TimeSpan.FromMinutes(15); // moving a big project across drives
+
+        /// <summary>
+        /// Edits a job; null/blank arguments are left unchanged. Name only relabels the job, Path moves its folder.
+        /// </summary>
+        public Task<CommandResult> EditJobAsync(string job, string? newName, string? branch, string? repo, string? newPath)
+        {
+            var args = new List<string> { "edit", job };
+            void Add(string flag, string? value)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) args.AddRange(new[] { flag, value.Trim() });
+            }
+            Add("-NewName", newName);
+            Add("-Branch", branch);
+            Add("-Repo", repo);
+            Add("-NewPath", newPath);
+            return RunAsync(MoveTimeout, args.ToArray());
+        }
+
+        /// <summary>
+        /// Where a job that was renamed or moved by `edit` lives (jobs.json), or null for a job in the default layout.
+        /// </summary>
+        public RegisteredJob? GetRegisteredJob(string job)
+        {
+            try
+            {
+                var file = Path.Combine(DataDir, "jobs.json");
+                if (!File.Exists(file)) return null;
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                foreach (var p in doc.RootElement.EnumerateObject())
+                {
+                    if (!string.Equals(p.Name, job, StringComparison.OrdinalIgnoreCase)) continue;
+                    var env = p.Value.GetProperty("env").GetString();
+                    var path = p.Value.GetProperty("path").GetString();
+                    return env is null || path is null ? null : new RegisteredJob(env, path);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException or UnauthorizedAccessException) { }
+            return null;
+        }
 
         /// <summary>Opens a plain shell (WSL or PowerShell, not claude) in the job folder in a Windows Terminal tab.</summary>
         public Task<CommandResult> OpenTerminalAsync(string job) => RunAsync(DefaultTimeout, "shell", job);

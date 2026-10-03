@@ -1,0 +1,142 @@
+@using AgentLegion.Services
+@inject LegionService Legion
+@inject SessionManager Sessions
+@inject JobStore Store
+
+<div class="card mb-3 job-editor">
+    <div class="card-body">
+        <div class="d-flex align-items-center mb-2 gap-2">
+            <h2 class="h6 card-title mb-0">Edit job · @Job.Job</h2>
+            <span class="badge @(Job.IsWindows ? "bg-info text-dark" : "bg-light text-dark border")">@(Job.IsWindows ? "PowerShell" : "WSL")</span>
+            <button class="btn btn-sm btn-link ms-auto" @onclick="CloseAsync">닫기</button>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="edName">Name</label>
+                <input id="edName" class="form-control" @bind="name" @bind:event="oninput" />
+                <div class="form-text">이름(표시용)만 바뀝니다. 폴더와 Claude 대화 기록은 그대로입니다.</div>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="edBranch">Branch</label>
+                <input id="edBranch" class="form-control" @bind="branch" @bind:event="oninput" />
+                <div class="form-text">있으면 전환하고, 없으면 현재 커밋에서 새로 만듭니다. 커밋하지 않은 변경이 있으면 거부됩니다.</div>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="edRepo">Repo (origin)</label>
+                <input id="edRepo" class="form-control" @bind="repo" @bind:event="oninput" />
+                <div class="form-text">origin URL을 바꿉니다. 인증 정보가 든 URL은 화면에 표시되지 않습니다.</div>
+            </div>
+            <div class="col-12">
+                <label class="form-label small mb-1" for="edPath">작업 경로 (Folder)</label>
+                <input id="edPath" class="form-control" @bind="path" @bind:event="oninput" />
+                <div class="form-text">
+                    폴더를 이 경로로 <strong>이동</strong>합니다(대화 기록도 함께 이동).
+                    @(Job.IsWindows ? "드라이브를 포함한 절대 경로, 예: D:\\work\\unity1" : "공백 없는 절대 경로, 예: /home/me/work/job1")
+                    · 이미 있는 비어 있지 않은 폴더는 거부됩니다.
+                </div>
+            </div>
+        </div>
+
+        @if (Blocked)
+        {
+            <div class="alert alert-warning py-2 mt-3 mb-0" role="alert">
+                실행 중인 세션이 있습니다. 이름, 브랜치, 작업 경로를 바꾸려면 먼저 <strong>Stop</strong>으로 세션을 종료하세요.
+                (Repo만 바꾸는 것은 실행 중에도 가능합니다.)
+            </div>
+        }
+
+        <div class="d-flex align-items-center gap-2 mt-3">
+            <button class="btn btn-primary" disabled="@(saving || !HasChanges || Blocked)" @onclick="SaveAsync">
+                @(saving ? "저장 중…" : "Save")
+            </button>
+            <button class="btn btn-outline-secondary" disabled="@saving" @onclick="Reset">되돌리기</button>
+            @if (saving && PathChanged)
+            {
+                <span class="text-muted small">폴더를 옮기는 중입니다. 큰 프로젝트나 다른 드라이브면 시간이 걸릴 수 있습니다.</span>
+            }
+        </div>
+
+        @if (result is not null)
+        {
+            <div class="alert @(result.Ok ? "alert-success" : "alert-danger") py-2 mt-3 mb-0" role="alert" style="white-space: pre-wrap;">@(string.IsNullOrWhiteSpace(result.Output) ? (result.Ok ? "변경했습니다." : "실패했습니다.") : result.Output)</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public JobInfo Job { get; set; } = default!;
+
+    /// <summary>
+    /// Called after a successful save with the job's (possibly new) name and the result. A rename recreates this
+    /// editor (the old name disappears from the list), so the parent shows the result, not this component.
+    /// </summary>
+    [Parameter] public EventCallback<(string Name, CommandResult Result)> OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string name = "";
+    private string branch = "";
+    private string repo = "";
+    private string path = "";
+    private string? loadedName;
+    private string? loadedKey;
+    private bool saving;
+    private CommandResult? result;
+
+    // Only changed fields are sent; an empty field means "leave as is".
+    private bool NameChanged => name.Trim().Length > 0 && name.Trim() != Job.Job;
+    private bool BranchChanged => branch.Trim().Length > 0 && branch.Trim() != (Job.Branch ?? "");
+    private bool RepoChanged => repo.Trim().Length > 0 && repo.Trim() != (Job.Repo ?? "");
+    private bool PathChanged => path.Trim().Length > 0 && path.Trim() != (Job.Path ?? "");
+    private bool HasChanges => NameChanged || BranchChanged || RepoChanged || PathChanged;
+
+    // The folder, branch and name are what a running claude session is working in.
+    private bool Blocked => (NameChanged || BranchChanged || PathChanged) && Sessions.IsRunning(Job.Job);
+
+    protected override void OnParametersSet()
+    {
+        var key = $"{Job.Job}|{Job.Branch}|{Job.Repo}|{Job.Path}";
+        // a different job always reloads; a refresh of the same job must not wipe what the user is typing
+        if (Job.Job != loadedName || (key != loadedKey && !HasChanges))
+        {
+            Reset();
+            loadedName = Job.Job;
+        }
+        loadedKey = key;
+    }
+
+    private void Reset()
+    {
+        name = Job.Job;
+        branch = Job.Branch ?? "";
+        repo = Job.Repo ?? "";
+        path = Job.Path ?? "";
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        result = null;
+        var finalName = NameChanged ? name.Trim() : Job.Job;
+        try
+        {
+            var r = await Legion.EditJobAsync(
+                Job.Job,
+                NameChanged ? name : null,
+                BranchChanged ? branch : null,
+                RepoChanged ? repo : null,
+                PathChanged ? path : null);
+            result = r;
+            // refresh even on failure: an earlier step (e.g. the repo) may already have been applied
+            await Store.RefreshAsync();
+            if (r.Ok) await OnSaved.InvokeAsync((finalName, r));
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+}

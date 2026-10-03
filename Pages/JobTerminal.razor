@@ -4,6 +4,7 @@
 @implements IAsyncDisposable
 @inject SessionManager Sessions
 @inject JobStore Store
+@inject NavigationManager Nav
 @inject LegionService Legion
 @inject IJSRuntime JS
 
@@ -27,6 +28,7 @@
     <div class="ms-auto d-flex gap-2">
         <button class="btn btn-sm btn-outline-secondary" disabled="@openingEditor" @onclick="OpenEditorAsync" title="이 job 폴더에서 code . 실행">VS Code</button>
         <button class="btn btn-sm btn-outline-secondary" disabled="@openingEditor" @onclick="OpenShellAsync" title="이 job 폴더에서 일반 터미널(셸) 열기 - claude 아님">Terminal</button>
+        <button class="btn btn-sm @(showEditor ? "btn-secondary" : "btn-outline-secondary")" @onclick="() => showEditor = !showEditor" title="이름, 브랜치, repo, 작업 경로 수정">Edit</button>
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)
         {
@@ -39,6 +41,11 @@
         }
     </div>
 </div>
+
+@if (showEditor && Store.Jobs.FirstOrDefault(x => x.Job == Name) is { } editing)
+{
+    <JobEditor Job="editing" OnSaved="OnEdited" OnClose="CloseEditor" />
+}
 
 @if (editorResult is { Ok: false })
 {
@@ -84,6 +91,7 @@ else if (!running && started)
     private bool started;
     private bool connecting;
     private bool openingEditor;
+    private bool showEditor;
     private CommandResult? editorResult;
     private bool disposed;
     private string? error;
@@ -236,6 +244,14 @@ else if (!running && started)
     }
 
     private static string ShortId(string id) => id.Length > 8 ? id[..8] : id;
+
+    private void CloseEditor() => showEditor = false;
+
+    // A renamed job lives under a new address: follow it (the page then connects the new name's session).
+    private void OnEdited((string Name, CommandResult Result) e)
+    {
+        if (e.Name != Name) Nav.NavigateTo($"jobs/{e.Name}");
+    }
 
     // The editor / terminal window opens on its own, so only a failure needs to be shown.
     private Task OpenEditorAsync() => LaunchAsync(Legion.OpenEditorAsync);

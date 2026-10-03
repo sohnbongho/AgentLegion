@@ -104,6 +104,7 @@ else
                                 <a class="btn btn-sm btn-primary" href="@($"jobs/{j.Job}")">Open</a>
                                 <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => CodeJob(j.Job)" title="이 job 폴더에서 code . 실행">VS Code</button>
                                 <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => ShellJob(j.Job)" title="이 job 폴더에서 일반 터미널(셸) 열기 - claude 아님">Terminal</button>
+                                <button class="btn btn-sm @(editingJob == j.Job ? "btn-secondary" : "btn-outline-secondary")" disabled="@busy" @onclick="() => ToggleEdit(j.Job)" title="이름, 브랜치, repo, 작업 경로 수정">Edit</button>
                                 @if (live)
                                 {
                                     <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => StopSession(j.Job)">Stop</button>
@@ -125,6 +126,11 @@ else
                 </tbody>
             </table>
         </div>
+
+        @if (editingJob is not null && Store.Jobs.FirstOrDefault(x => x.Job == editingJob) is { } editing)
+        {
+            <JobEditor Job="editing" OnSaved="OnEdited" OnClose="CloseEdit" />
+        }
     }
 }
 
@@ -156,6 +162,19 @@ else
     private string? busyJob;
     private string? busyAction;
     private string? confirmRemove;
+    private string? editingJob;
+
+    private void ToggleEdit(string job) => editingJob = editingJob == job ? null : job;
+
+    private void CloseEdit() => editingJob = null;
+
+    // keep the editor open on the (possibly renamed) job so the result stays visible
+    private void OnEdited((string Name, CommandResult Result) e)
+    {
+        editingJob = e.Name;
+        result = e.Result;
+        resultTitle = $"Edit {e.Name}";
+    }
     private CommandResult? result;
     private string? resultTitle;
 

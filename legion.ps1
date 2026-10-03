@@ -20,6 +20,8 @@ param(
   [string]$Root,
   [string]$WindowsRoot,
   [ValidateSet('', 'wsl', 'windows')][string]$Target = '',
+  [string]$NewName,
+  [string]$NewPath,
   [string]$Prompt,
   [int]$TimeoutSec = 600,
   [string]$Base,
@@ -46,6 +48,49 @@ function Get-Opt($cfg, $name, $default) {
 }
 
 # ----------------------------------------------------------------------------------------------
+# Job registry (jobs.json)
+# ----------------------------------------------------------------------------------------------
+# A job normally lives at <jobs root>/<name> and is found by scanning the root. jobs.json lists only the jobs
+# whose name or folder differs from that layout (renamed or moved by `edit`):
+#   { "alpha": { "env": "wsl", "path": "/home/me/agentjobs/job1" } }
+$RegistryPath = Join-Path $PSScriptRoot 'jobs.json'
+
+function Get-Registry {
+  $h = @{}   # PowerShell hashtables compare keys case-insensitively
+  if (Test-Path -LiteralPath $RegistryPath) {
+    $raw = Get-Content -LiteralPath $RegistryPath -Raw
+    if ($raw -and $raw.Trim()) {
+      $o = $raw | ConvertFrom-Json
+      foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = [pscustomobject]@{ env = $p.Value.env; path = $p.Value.path } }
+    }
+  }
+  $h
+}
+
+function Save-Registry($h) {
+  if ($h.Count -eq 0) {
+    if (Test-Path -LiteralPath $RegistryPath) { [IO.File]::Delete($RegistryPath) }
+    return
+  }
+  $o = [ordered]@{}
+  foreach ($k in ($h.Keys | Sort-Object)) { $o[$k] = [ordered]@{ env = $h[$k].env; path = $h[$k].path } }
+  $o | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $RegistryPath -Encoding UTF8
+}
+
+function Get-RegEntry($name) {
+  $r = Get-Registry
+  if ($r.ContainsKey($name)) { $r[$name] }
+}
+
+# Name of the registry entry that points at this folder (a job renamed/moved by `edit`), or $null.
+function Find-RegName($envName, [string]$path, $reg) {
+  $want = $path.TrimEnd('\', '/')
+  foreach ($k in $reg.Keys) {
+    if ($reg[$k].env -eq $envName -and ([string]$reg[$k].path).TrimEnd('\', '/') -ieq $want) { return $k }
+  }
+}
+
+# ----------------------------------------------------------------------------------------------
 # WSL helpers
 # ----------------------------------------------------------------------------------------------
 function Wsl-Args($cfg) { if ($cfg.distro) { @('-d', $cfg.distro) } else { @() } }
@@ -67,13 +112,26 @@ function Get-WinRoot($cfg) {
 
 function Get-WinClaude($cfg) { Get-Opt $cfg 'windowsClaudeCmd' 'claude' }
 
-function Win-Dir($cfg, $name) { Join-Path (Get-WinRoot $cfg) $name }
+# Where a job's folder is: the registry entry if there is one, otherwise <root>/<name>.
+function Win-Dir($cfg, $name) {
+  $e = Get-RegEntry $name
+  if ($e -and $e.env -eq 'windows') { return $e.path }
+  Join-Path (Get-WinRoot $cfg) $name
+}
+
+function Wsl-Dir($cfg, $name) {
+  $e = Get-RegEntry $name
+  if ($e -and $e.env -eq 'wsl') { return $e.path }
+  "$($cfg.jobsRoot)/$name"
+}
 
 function Test-WinJob($cfg, $name) { Test-Path -LiteralPath (Join-Path (Win-Dir $cfg $name) '.git') }
 
-# A job lives in exactly one environment; a Windows folder wins, otherwise it is a WSL job.
+# A job lives in exactly one environment: the registry says so; otherwise a Windows folder wins, else it is a WSL job.
 function Get-JobTarget($cfg, $name) {
   if ($Target) { return $Target }
+  $e = Get-RegEntry $name
+  if ($e) { return $e.env }
   if (Test-WinJob $cfg $name) { 'windows' } else { 'wsl' }
 }
 
@@ -149,9 +207,13 @@ function Cmd-Add($cfg) {
   $repoUrl = if ($Repo) { $Repo } else { $cfg.repo }
   Assert-Safe $repoUrl '^\S+$' 'repo'
 
+  # names are unique across both environments and across jobs renamed/moved by `edit`
+  if ((Get-Registry).ContainsKey($Name)) { throw "a job named '$Name' already exists; job names are shared across environments" }
+
   if ($Target -eq 'windows') { Win-Add $cfg $br $repoUrl; return }
 
   if (Test-WinJob $cfg $Name) { throw "a Windows job named '$Name' already exists; job names are shared across environments" }
+  Assert-FolderFree $cfg 'wsl' "$($cfg.jobsRoot)/$Name"
   $repo = $repoUrl -replace "'", "'\''"
   Invoke-Wsl $cfg @"
 set -e
@@ -175,6 +237,7 @@ function Win-Add($cfg, $br, $repoUrl) {
   $root = Get-WinRoot $cfg
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   $dir = Join-Path $root $Name
+  Assert-FolderFree $cfg 'windows' $dir
   if (-not (Test-Path -LiteralPath (Join-Path $dir '.git'))) {
     if ((Test-Path -LiteralPath $dir) -and (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
       throw "folder exists and is not a git repository: $dir"
@@ -189,43 +252,88 @@ function Win-Add($cfg, $br, $repoUrl) {
   Write-Host "$Name -> $(Git-Win $dir @('rev-parse', '--abbrev-ref', 'HEAD'))"
 }
 
-# Jobs from both environments. A broken WSL setup must not hide Windows jobs.
-function Get-JobList($cfg) {
-  $jobs = New-Object System.Collections.Generic.List[object]
+# A new job must not land on a folder that a renamed/moved job already uses (it would silently reuse it).
+function Assert-FolderFree($cfg, [string]$envName, [string]$path) {
+  $reg = Get-Registry
+  $mine = @($reg.Keys | Where-Object { $reg[$_].env -eq $envName })
+  if ($mine.Count -eq 0) { return }
+  if ($envName -eq 'wsl') {
+    # registry paths are absolute; the configured root may start with ~
+    $path = (Invoke-Wsl $cfg "echo $path" | Where-Object { $_ } | Select-Object -First 1)
+  }
+  $owner = Find-RegName $envName "$path" $reg
+  if ($owner) { throw "the folder '$path' is already used by the job '$owner'" }
+}
 
+# Jobs from both environments. A broken WSL setup must not hide Windows jobs.
+# A folder shows up under its registry name if jobs.json points at it (renamed/moved job), else under its folder name.
+function Get-JobList($cfg) {
+  $reg = Get-Registry
+  $jobs = New-Object System.Collections.Generic.List[object]
+  $seen = @{}
+
+  # ---- Windows: every git folder in the root, plus registered folders elsewhere ----
+  $winPaths = New-Object System.Collections.Generic.List[string]
   $winRoot = Get-WinRoot $cfg
   if (Test-Path -LiteralPath $winRoot) {
     foreach ($d in Get-ChildItem -LiteralPath $winRoot -Directory) {
-      if (-not (Test-Path -LiteralPath (Join-Path $d.FullName '.git'))) { continue }
-      $b = (Git-WinQuiet $d.FullName @('rev-parse', '--abbrev-ref', 'HEAD') | Select-Object -First 1)
-      $n = @(Git-WinQuiet $d.FullName @('status', '--porcelain')).Count
-      $r = (Git-WinQuiet $d.FullName @('remote', 'get-url', 'origin') | Select-Object -First 1)
-      $jobs.Add([pscustomobject]@{
-        Job = $d.Name; Env = 'windows'; Branch = "$b"; Changes = [int]$n
-        Repo = ("$r" -replace '://[^/@]*@', '://'); Path = $d.FullName
-      })
+      if (Test-Path -LiteralPath (Join-Path $d.FullName '.git')) { $winPaths.Add($d.FullName) }
     }
   }
+  foreach ($k in $reg.Keys) { if ($reg[$k].env -eq 'windows') { $winPaths.Add([string]$reg[$k].path) } }
+  foreach ($p in $winPaths) {
+    $key = 'windows|' + $p.TrimEnd('\').ToLowerInvariant()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    $name = Find-RegName 'windows' $p $reg
+    if (-not $name) { $name = Split-Path $p -Leaf }
+    if ($jobs | Where-Object { $_.Job -eq $name }) { continue }
+    if (-not (Test-Path -LiteralPath (Join-Path $p '.git'))) {
+      $jobs.Add([pscustomobject]@{ Job = $name; Env = 'windows'; Branch = '(folder missing)'; Changes = 0; Repo = ''; Path = $p })
+      continue
+    }
+    $b = (Git-WinQuiet $p @('rev-parse', '--abbrev-ref', 'HEAD') | Select-Object -First 1)
+    $n = @(Git-WinQuiet $p @('status', '--porcelain')).Count
+    $r = (Git-WinQuiet $p @('remote', 'get-url', 'origin') | Select-Object -First 1)
+    $jobs.Add([pscustomobject]@{
+      Job = $name; Env = 'windows'; Branch = "$b"; Changes = [int]$n
+      Repo = ("$r" -replace '://[^/@]*@', '://'); Path = $p
+    })
+  }
 
+  # ---- WSL: every git folder in the root, plus registered folders elsewhere ----
+  $extra = @($reg.Keys | Where-Object { $reg[$_].env -eq 'wsl' } | ForEach-Object { [string]$reg[$_].path })
+  foreach ($x in $extra) { Assert-Safe $x '^[~/A-Za-z0-9._@+-]+$' 'registered WSL folder' }
   try {
-    $lines = Invoke-Wsl $cfg @"
-cd $($cfg.jobsRoot) 2>/dev/null || exit 0
-for d in */; do
-  d=`${d%/}
-  [ -d "`$d/.git" ] || continue
-  b=`$(git -C "`$d" rev-parse --abbrev-ref HEAD)
-  n=`$(git -C "`$d" status --porcelain | wc -l)
-  r=`$(git -C "`$d" remote get-url origin 2>/dev/null || true)
-  printf '%s\t%s\t%s\t%s\n' "`$d" "`$b" "`$n" "`$r"
-done
-"@
+    $script = "ROOT=$($cfg.jobsRoot)`nEXTRA='$($extra -join ' ')'`n" + @'
+emit() {
+  d="$1"
+  if [ ! -d "$d/.git" ]; then printf '%s\t%s\t%s\t%s\t%s\n' "$(basename "$d")" "(folder missing)" 0 "" "$d"; return; fi
+  p=$(cd "$d" && pwd -P)
+  b=$(git -C "$d" rev-parse --abbrev-ref HEAD)
+  n=$(git -C "$d" status --porcelain | wc -l)
+  r=$(git -C "$d" remote get-url origin 2>/dev/null || true)
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(basename "$p")" "$b" "$n" "$r" "$p"
+}
+if cd "$ROOT" 2>/dev/null; then
+  for d in */; do d=${d%/}; [ -d "$d/.git" ] || continue; emit "$PWD/$d"; done
+fi
+for x in $EXTRA; do emit "$x"; done
+'@
+    $lines = Invoke-Wsl $cfg $script
     foreach ($l in @($lines | Where-Object { $_ })) {
       $f = $l -split "`t"
+      $path = if ($f.Count -gt 4) { $f[4] } else { "$($cfg.jobsRoot)/$($f[0])" }
+      $key = 'wsl|' + $path.TrimEnd('/')
+      if ($seen.ContainsKey($key)) { continue }
+      $seen[$key] = $true
+      $name = Find-RegName 'wsl' $path $reg
+      if (-not $name) { $name = $f[0] }
       # drop credentials embedded in the URL (https://user:token@host/...) before they reach any UI
       $repo = if ($f.Count -gt 3) { $f[3] -replace '://[^/@]*@', '://' } else { '' }
-      if ($jobs | Where-Object { $_.Job -eq $f[0] }) { continue } # Windows folder wins on a name clash
+      if ($jobs | Where-Object { $_.Job -eq $name }) { continue } # Windows folder wins on a name clash
       $jobs.Add([pscustomobject]@{
-        Job = $f[0]; Env = 'wsl'; Branch = $f[1]; Changes = [int]$f[2]; Repo = $repo; Path = "$($cfg.jobsRoot)/$($f[0])"
+        Job = $name; Env = 'wsl'; Branch = $f[1]; Changes = [int]$f[2]; Repo = $repo; Path = $path
       })
     }
   } catch {
@@ -256,7 +364,7 @@ function Start-Job-Tab($cfg, $name) {
     }
     return
   }
-  $dir = "$($cfg.jobsRoot)/$name"
+  $dir = Wsl-Dir $cfg $name
   $wslArgs = @(Wsl-Args $cfg) + @('--cd', $dir, '--', 'bash', '-lc', $cfg.claudeCmd)
   if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
     Start-Process wt.exe -ArgumentList (@('-w', '0', 'new-tab', '--title', $name, 'wsl.exe') + $wslArgs)
@@ -270,7 +378,7 @@ function Cmd-Run($cfg) {
   if (-not $Prompt) { throw '-Prompt is required' }
   if ((Get-JobTarget $cfg $Name) -eq 'windows') { Win-Run $cfg; return }
   $p = $Prompt -replace "'", "'\''"
-  Invoke-Wsl $cfg "cd $($cfg.jobsRoot)/$Name && timeout $TimeoutSec $($cfg.claudeCmd) -p '$p' < /dev/null" -NoThrow
+  Invoke-Wsl $cfg "cd $(Wsl-Dir $cfg $Name) && timeout $TimeoutSec $($cfg.claudeCmd) -p '$p' < /dev/null" -NoThrow
   if ($LASTEXITCODE -eq 124) {
     throw "claude timed out after ${TimeoutSec}s. If this is unexpected, run '.\legion.ps1 doctor' (auth may be expired; run 'claude' in WSL and /login)."
   }
@@ -307,7 +415,7 @@ function Job-Prelude($cfg) {
   if ($Base) { Assert-Safe $Base '^[A-Za-z0-9._/-]+$' 'base' }
   @"
 set -e
-cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+cd $(Wsl-Dir $cfg $Name) 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 BR=`$(git rev-parse --abbrev-ref HEAD)
 BASE='$Base'
 [ -n "`$BASE" ] || BASE=`$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
@@ -431,7 +539,7 @@ print(json.dumps(out))
   $lines = Invoke-Wsl $cfg @"
 command -v python3 >/dev/null || { echo 'python3 is required in WSL for usage stats' >&2; exit 1; }
 echo $b64 | base64 -d > /tmp/legion_usage.py
-python3 /tmp/legion_usage.py $($cfg.jobsRoot)/$Name
+python3 /tmp/legion_usage.py $(Wsl-Dir $cfg $Name)
 "@
   ($lines | Where-Object { $_ } | Select-Object -Last 1)
 }
@@ -489,7 +597,7 @@ function Cmd-Code($cfg) {
 
   # resolve the real distro name and the absolute folder inside WSL (the configured root may start with ~)
   $lines = @(Invoke-Wsl $cfg @"
-cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+cd $(Wsl-Dir $cfg $Name) 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 echo "`$WSL_DISTRO_NAME"
 pwd -P
 "@ | Where-Object { $_ })
@@ -532,7 +640,7 @@ function Cmd-Shell($cfg) {
     return
   }
 
-  $dir = "$($cfg.jobsRoot)/$Name"
+  $dir = Wsl-Dir $cfg $Name
   Invoke-Wsl $cfg @"
 cd $dir 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 "@ | Out-Null
@@ -569,7 +677,7 @@ function Win-LastSession($cfg) {
 }
 
 function Wsl-LastSession($cfg) {
-  $script = "DIR=$($cfg.jobsRoot)/$Name`n" + @'
+  $script = "DIR=$(Wsl-Dir $cfg $Name)`n" + @'
 cd "$DIR" 2>/dev/null || { echo "job not found" >&2; exit 1; }
 real=$(pwd -P)
 base=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
@@ -628,19 +736,178 @@ function Cmd-Doctor($cfg) {
   if ($state.fail) { throw "$($state.fail) check(s) failed" } else { Write-Host 'All checks passed.' }
 }
 
+# Edit a job. All inputs are validated first; then they are applied in this order: repo, branch, folder move, name.
+#   -Repo     point origin at another URL
+#   -Branch   switch to that branch (existing, else created from the current commit); needs a clean working tree
+#   -NewPath  move the job folder (the Claude history for the folder moves along, so resume/token stats keep working)
+#   -NewName  rename the job. Only the label changes: the folder and the Claude history stay where they are.
+function Cmd-Edit($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  if ($NewName -ieq $Name) { $script:NewName = '' }
+  if (-not ($NewName -or $Branch -or $Repo -or $NewPath)) { throw 'nothing to change: give -NewName, -Branch, -Repo and/or -NewPath' }
+  $isWin = (Get-JobTarget $cfg $Name) -eq 'windows'
+  $envName = if ($isWin) { 'windows' } else { 'wsl' }
+
+  # ---- validate everything before touching anything ----
+  if ($NewName) {
+    Assert-Safe $NewName '^[A-Za-z0-9_-]+$' 'new job name'
+    $taken = @(Get-JobList $cfg | ForEach-Object { $_.Job }) + @((Get-Registry).Keys)
+    if ($taken -contains $NewName) { throw "a job named '$NewName' already exists" }
+  }
+  if ($Branch) { Assert-Safe $Branch '^[A-Za-z0-9._/-]+$' 'branch' }
+  if ($Repo) { Assert-Safe $Repo '^\S+$' 'repo' }
+  if ($NewPath) {
+    if ($NewPath -match '\.\.') { throw "the folder must not contain '..'" }
+    if ($isWin) { Assert-Safe $NewPath '^[A-Za-z]:\\[A-Za-z0-9_ .()\\-]+$' 'folder (an absolute Windows path such as D:\work\job1)' }
+    else { Assert-Safe $NewPath '^(~|/)[A-Za-z0-9._/@+~-]*$' 'folder (an absolute WSL path such as /home/me/work/job1, no spaces)' }
+  }
+
+  $final = if ($isWin) { Edit-Windows $cfg } else { Edit-Wsl $cfg }
+
+  # jobs.json only needs an entry when the name or the folder is no longer the default layout
+  if ($NewName -or $NewPath) {
+    $reg = Get-Registry
+    if ($reg.ContainsKey($Name)) { $reg.Remove($Name) }
+    $reg[$(if ($NewName) { $NewName } else { $Name })] = [pscustomobject]@{ env = $envName; path = $final }
+    Save-Registry $reg
+  }
+  Write-Host ("Updated $Name" + $(if ($NewName) { " (now $NewName)" } else { '' }))
+}
+
+function Git-WinOk([string]$dir, [string[]]$gitArgs) {
+  [bool](Quiet { & git -C $dir @gitArgs 2>$null | Out-Null; $LASTEXITCODE -eq 0 })
+}
+
+# Returns the job's final absolute folder.
+function Edit-Windows($cfg) {
+  $dir = (Resolve-Path -LiteralPath (Require-WinJob $cfg)).ProviderPath
+
+  if ($Repo) {
+    if (@(Git-WinQuiet $dir @('remote', 'get-url', 'origin')).Count -gt 0) { Git-Win $dir @('remote', 'set-url', 'origin', $Repo) | Out-Null }
+    else { Git-Win $dir @('remote', 'add', 'origin', $Repo) | Out-Null }
+    Write-Host ("repo -> " + ($Repo -replace '://[^/@]*@', '://'))   # never echo credentials into logs / the web UI
+  }
+
+  if ($Branch) {
+    if (@(Git-Win $dir @('status', '--porcelain')).Count -gt 0) { throw "uncommitted changes in ${Name}: commit or stash them before switching branch" }
+    # an existing local branch, else a remote one of that name (git sets up tracking), else a new branch from here
+    if (-not (Git-WinOk $dir @('checkout', $Branch))) { Git-Win $dir @('checkout', '-b', $Branch) | Out-Null }
+    Write-Host "branch -> $(Git-Win $dir @('rev-parse', '--abbrev-ref', 'HEAD'))"
+  }
+
+  $final = $dir
+  if ($NewPath) {
+    $np = [IO.Path]::GetFullPath($NewPath).TrimEnd('\')
+    $cur = $dir.TrimEnd('\')
+    if ($np -ine $cur) {
+      if (($np + '\').StartsWith($cur + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'the new folder is inside the current one' }
+      if (Test-Path -LiteralPath $np) {
+        if (-not (Test-Path -LiteralPath $np -PathType Container) -or (Get-ChildItem -LiteralPath $np -Force | Select-Object -First 1)) {
+          throw "the target already exists and is not an empty folder: $np"
+        }
+        [IO.Directory]::Delete($np)
+      }
+      $parent = Split-Path $np -Parent
+      if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+
+      if ([IO.Path]::GetPathRoot($cur) -ieq [IO.Path]::GetPathRoot($np)) {
+        [IO.Directory]::Move($cur, $np)   # same drive: a rename, instant
+      } else {
+        & robocopy.exe $cur $np /E /MOVE /R:1 /W:1 /NFL /NDL /NP /NJH /NJS | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "moving the folder to another drive failed (robocopy exit $LASTEXITCODE); it may be partly moved: $cur" }
+        if (Test-Path -LiteralPath $cur) { & cmd.exe /c rd /s /q "$cur" }
+      }
+
+      # Claude keeps a job's conversations under a folder named after the job's path: move that along
+      $claudeHome = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+      $projects = Join-Path $claudeHome 'projects'
+      $histOld = Join-Path $projects ($cur -replace '[^a-zA-Z0-9]', '-')
+      $histNew = Join-Path $projects ($np -replace '[^a-zA-Z0-9]', '-')
+      if ((Test-Path -LiteralPath $histOld) -and -not (Test-Path -LiteralPath $histNew)) {
+        [IO.Directory]::Move($histOld, $histNew)
+        Write-Host 'Claude history moved with the folder'
+      }
+      $final = $np
+      Write-Host "folder -> $np"
+    }
+  }
+  $final
+}
+
+function Edit-Wsl($cfg) {
+  $repoQ = if ($Repo) { $Repo -replace "'", "'\''" } else { '' }
+  $branchQ = if ($Branch) { $Branch -replace "'", "'\''" } else { '' }
+  $script = "OLD=$(Wsl-Dir $cfg $Name)`nREPO='$repoQ'`nBRANCH='$branchQ'`nNEWPATH=$NewPath`nNAME=$Name`n" + @'
+cd "$OLD" 2>/dev/null || { echo "job not found: $NAME" >&2; exit 1; }
+set -e
+OLD=$(pwd -P)
+if [ -n "$REPO" ]; then
+  if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin "$REPO"; else git remote add origin "$REPO"; fi
+  echo "repo -> $(printf '%s' "$REPO" | sed -E 's#://[^/@]*@#://#')"   # never echo credentials
+fi
+if [ -n "$BRANCH" ]; then
+  if [ -n "$(git status --porcelain)" ]; then echo "uncommitted changes in $NAME: commit or stash them before switching branch" >&2; exit 1; fi
+  git checkout "$BRANCH" >/dev/null 2>&1 || git checkout -b "$BRANCH" >/dev/null 2>&1
+  echo "branch -> $(git rev-parse --abbrev-ref HEAD)"
+fi
+NEW="$OLD"
+if [ -n "$NEWPATH" ]; then
+  case "$NEWPATH/" in "$OLD"/*) echo "the new folder is inside the current one" >&2; exit 1;; esac
+  if [ -e "$NEWPATH" ]; then
+    if [ -d "$NEWPATH" ] && [ -z "$(ls -A "$NEWPATH")" ]; then rmdir "$NEWPATH"
+    else echo "the target already exists and is not an empty folder: $NEWPATH" >&2; exit 1; fi
+  fi
+  mkdir -p "$(dirname "$NEWPATH")"
+  cd /
+  mv "$OLD" "$NEWPATH"
+  NEW=$(cd "$NEWPATH" && pwd -P)
+  # Claude keeps a job's conversations under a folder named after the job's path: move that along
+  projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+  e_old=$(printf '%s' "$OLD" | sed 's/[^a-zA-Z0-9]/-/g')
+  e_new=$(printf '%s' "$NEW" | sed 's/[^a-zA-Z0-9]/-/g')
+  if [ -d "$projects/$e_old" ] && [ ! -e "$projects/$e_new" ]; then mv "$projects/$e_old" "$projects/$e_new"; echo "Claude history moved with the folder"; fi
+  echo "folder -> $NEW"
+fi
+echo "PATH=$NEW"
+'@
+  $lines = @(Invoke-Wsl $cfg $script | Where-Object { $_ })
+  $final = $null
+  foreach ($l in $lines) { if ("$l" -like 'PATH=*') { $final = "$l".Substring(5) } else { Write-Host $l } }
+  if (-not $final) { throw 'the WSL side did not report the final folder' }
+  $final
+}
+
 function Cmd-Remove($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
   if ((Get-JobTarget $cfg $Name) -eq 'windows') { Win-Remove $cfg; return }
   if (-not $Force) {
     # refuse if there are uncommitted changes or commits not present on any remote branch
     Invoke-Wsl $cfg @"
-cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+cd $(Wsl-Dir $cfg $Name) 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
 [ -z "`$(git status --porcelain)" ] || { echo "uncommitted changes in $Name (use -Force to delete anyway)" >&2; exit 1; }
 [ -z "`$(git log --branches --not --remotes --oneline)" ] || { echo "unpushed commits in $Name (push/merge them or use -Force)" >&2; exit 1; }
 "@
   }
-  Invoke-Wsl $cfg "rm -rf $($cfg.jobsRoot)/$Name"
-  Write-Host "Removed $Name"
+  # Only a folder inside the jobs root is deleted. A job moved elsewhere by `edit` is just unregistered, so
+  # remove can never wipe a folder the user pointed a job at.
+  $result = Invoke-Wsl $cfg @"
+ROOT=$($cfg.jobsRoot)
+cd $(Wsl-Dir $cfg $Name) 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+real=`$(pwd -P)
+root=`$(cd "`$ROOT" 2>/dev/null && pwd -P || echo /nonexistent)
+case "`$real/" in
+  "`$root"/*) cd / && rm -rf "`$real"; echo REMOVED ;;
+  *) echo OUTSIDE ;;
+esac
+"@
+  Remove-RegEntry $Name
+  if (@($result) -contains 'OUTSIDE') { Write-Host "Unregistered $Name (its folder is outside the jobs root and was left in place)" }
+  else { Write-Host "Removed $Name" }
+}
+
+function Remove-RegEntry($name) {
+  $reg = Get-Registry
+  if ($reg.ContainsKey($name)) { $reg.Remove($name); Save-Registry $reg }
 }
 
 function Win-Remove($cfg) {
@@ -654,9 +921,15 @@ function Win-Remove($cfg) {
   # rd removes junctions/links without following them and clears read-only files (git objects, Unity Library)
   $full = [IO.Path]::GetFullPath($dir)
   $rootFull = [IO.Path]::GetFullPath((Get-WinRoot $cfg)).TrimEnd('\')
-  if (-not $full.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to delete outside the jobs root: $full" }
+  if (-not $full.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    # a job moved elsewhere by `edit`: never delete a folder outside the jobs root, only forget the job
+    Remove-RegEntry $Name
+    Write-Host "Unregistered $Name (its folder $full is outside the jobs root and was left in place)"
+    return
+  }
   & cmd.exe /c rd /s /q "$full"
   if (Test-Path -LiteralPath $full) { throw "could not fully remove $full (is a program such as Unity using it?)" }
+  Remove-RegEntry $Name
   Write-Host "Removed $Name"
 }
 
@@ -676,6 +949,7 @@ switch ($Command) {
   'last-session' { Cmd-LastSession (Get-Config) }
   'code'      { Cmd-Code (Get-Config) }
   'shell'     { Cmd-Shell (Get-Config) }
+  'edit'      { Cmd-Edit (Get-Config) }
   'diff'      { Cmd-Diff (Get-Config) }
   'push'      { Cmd-Push (Get-Config) }
   'merge'     { Cmd-Merge (Get-Config) }
@@ -698,6 +972,8 @@ AgentLegion commands:
   last-session <job> [-Json]    id of the job's most recent Claude conversation (for claude --resume)
   code <job>                    open the job folder in the editor (code .; WSL jobs via Remote-WSL; "codeCmd" in legion.json)
   shell <job>                   open a plain terminal (WSL shell or PowerShell) in the job folder, not claude
+  edit <job> [-NewName n] [-Branch b] [-Repo url] [-NewPath dir]
+                                rename the job (label only), switch branch, change origin, or move the job folder
   doctor [-Target windows]      check WSL / Windows, git, claude, repo access, claude auth
   remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host
