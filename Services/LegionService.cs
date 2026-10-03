@@ -171,6 +171,12 @@ namespace AgentLegion.Services
         /// <summary>Jobs root as configured (e.g. ~/agentjobs), for displaying a job's folder.</summary>
         public string JobsRoot => LoadConfig()?.JobsRoot ?? "~/agentjobs";
 
+        /// <summary>Runs `code .` in the job folder (WSL jobs through WSL, Windows jobs on Windows).</summary>
+        public Task<CommandResult> OpenEditorAsync(string job) => RunAsync(NetworkTimeout, "code", job);
+
+        /// <summary>Opens a plain shell (WSL or PowerShell, not claude) in the job folder in a Windows Terminal tab.</summary>
+        public Task<CommandResult> OpenTerminalAsync(string job) => RunAsync(DefaultTimeout, "shell", job);
+
         public Task<CommandResult> StartAsync(string job) => RunAsync(DefaultTimeout, "start", job);
 
         public Task<CommandResult> DiffAsync(string job) => RunAsync(DefaultTimeout, "diff", job);

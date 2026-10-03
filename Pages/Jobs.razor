@@ -102,6 +102,8 @@ else
                                     <span class="text-muted me-2">@busyAction...</span>
                                 }
                                 <a class="btn btn-sm btn-primary" href="@($"jobs/{j.Job}")">Open</a>
+                                <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => CodeJob(j.Job)" title="이 job 폴더에서 code . 실행">VS Code</button>
+                                <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => ShellJob(j.Job)" title="이 job 폴더에서 일반 터미널(셸) 열기 - claude 아님">Terminal</button>
                                 @if (live)
                                 {
                                     <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => StopSession(j.Job)">Stop</button>
@@ -201,6 +203,8 @@ else
         }
     }
 
+    private Task CodeJob(string job) => RunAsync(job, "VS Code", Legion.OpenEditorAsync);
+    private Task ShellJob(string job) => RunAsync(job, "Terminal", Legion.OpenTerminalAsync);
     private Task DiffJob(string job) => RunAsync(job, "Diff", Legion.DiffAsync);
     private Task PushJob(string job) => RunAsync(job, "Push", Legion.PushAsync);
 

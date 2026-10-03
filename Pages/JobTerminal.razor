@@ -25,6 +25,8 @@
         <span class="text-muted small">세션 확인 중…</span>
     }
     <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" disabled="@openingEditor" @onclick="OpenEditorAsync" title="이 job 폴더에서 code . 실행">VS Code</button>
+        <button class="btn btn-sm btn-outline-secondary" disabled="@openingEditor" @onclick="OpenShellAsync" title="이 job 폴더에서 일반 터미널(셸) 열기 - claude 아님">Terminal</button>
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)
         {
@@ -37,6 +39,14 @@
         }
     </div>
 </div>
+
+@if (editorResult is { Ok: false })
+{
+    <div class="alert alert-warning py-2 d-flex" role="alert">
+        <span class="me-auto">열지 못했습니다: @editorResult.Output</span>
+        <button class="btn btn-sm btn-link py-0 text-nowrap" @onclick="() => editorResult = null">닫기</button>
+    </div>
+}
 
 @if (error is not null)
 {
@@ -70,6 +80,8 @@ else if (!running && started)
     private bool running;
     private bool started;
     private bool connecting;
+    private bool openingEditor;
+    private CommandResult? editorResult;
     private bool disposed;
     private string? error;
     private TermSize size = new(120, 30);
@@ -185,6 +197,20 @@ else if (!running && started)
     }
 
     private static string ShortId(string id) => id.Length > 8 ? id[..8] : id;
+
+    // The editor / terminal window opens on its own, so only a failure needs to be shown.
+    private Task OpenEditorAsync() => LaunchAsync(Legion.OpenEditorAsync);
+
+    // A plain shell in the job folder (a Windows Terminal tab), as opposed to the claude session shown below.
+    private Task OpenShellAsync() => LaunchAsync(Legion.OpenTerminalAsync);
+
+    private async Task LaunchAsync(Func<string, Task<CommandResult>> launch)
+    {
+        openingEditor = true;
+        editorResult = null;
+        try { editorResult = await launch(Name); }
+        finally { openingEditor = false; }
+    }
 
     private void OnSessionExited() => OnSessionsChanged();
 

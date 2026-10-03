@@ -135,7 +135,7 @@ function Cmd-Init {
   $cfg['claudeCmd'] = if ($old) { Get-Opt $old 'claudeCmd' 'claude' } else { 'claude' }
   if ($WindowsRoot) { $cfg['windowsJobsRoot'] = $WindowsRoot }
   elseif ($old -and $old.PSObject.Properties['windowsJobsRoot']) { $cfg['windowsJobsRoot'] = $old.windowsJobsRoot }
-  foreach ($k in 'windowsClaudeCmd', 'stateDetection', 'resumeLastSession') {
+  foreach ($k in 'windowsClaudeCmd', 'stateDetection', 'resumeLastSession', 'codeCmd') {
     if ($old -and $old.PSObject.Properties[$k]) { $cfg[$k] = $old.$k }
   }
   $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
@@ -467,6 +467,84 @@ function Win-Usage($cfg) {
   } | ConvertTo-Json -Compress
 }
 
+# Open the job folder in the editor. The editor is always launched from Windows, so it works even when WSL
+# cannot start Windows programs (broken interop, common with systemd=true):
+#   Windows job: `code .` in the job folder
+#   WSL job:     `code --remote wsl+<distro> <absolute WSL path>` (Remote-WSL window)
+# The command name can be changed with "codeCmd" in legion.json (e.g. cursor).
+function Cmd-Code($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  $code = Get-Opt $cfg 'codeCmd' 'code'
+  Assert-Safe $code '^[A-Za-z0-9._-]+$' 'codeCmd'
+  if (-not (Get-Command $code -ErrorAction SilentlyContinue)) {
+    throw "'$code' was not found on the Windows PATH. In the editor run: Shell Command: Install '$code' command in PATH."
+  }
+
+  if ((Get-JobTarget $cfg $Name) -eq 'windows') {
+    $dir = Require-WinJob $cfg
+    Start-Editor $code @('.') $dir
+    Write-Host "Opened $dir with $code"
+    return
+  }
+
+  # resolve the real distro name and the absolute folder inside WSL (the configured root may start with ~)
+  $lines = @(Invoke-Wsl $cfg @"
+cd $($cfg.jobsRoot)/$Name 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+echo "`$WSL_DISTRO_NAME"
+pwd -P
+"@ | Where-Object { $_ })
+  if ($lines.Count -lt 2) { throw 'could not resolve the WSL folder of the job' }
+  $distroName = "$($lines[0])".Trim(); $wslDir = "$($lines[1])".Trim()
+  Assert-Safe $distroName '^[A-Za-z0-9._-]+$' 'distro'
+  Assert-Safe $wslDir '^/[A-Za-z0-9._/@+-]+$' 'WSL folder'
+
+  Start-Editor $code @('--remote', "wsl+$distroName", $wslDir) $PSScriptRoot
+  Write-Host "Opened wsl+${distroName}:$wslDir with $code (Remote-WSL)"
+}
+
+# Launch the editor detached from this script. `code.cmd` stays alive as long as the editor window does and the
+# editor would inherit our stdout/stderr pipes, so a caller reading them (the web UI) would wait forever and then
+# kill the process tree - closing the window it just opened. Start-Process goes through ShellExecute, which does
+# not pass those handles on. A launcher that fails exits within moments, so wait briefly to report that.
+function Start-Editor([string]$code, [string[]]$codeArgs, [string]$workDir) {
+  $p = Start-Process -FilePath cmd.exe -ArgumentList (@('/c', $code) + $codeArgs) `
+        -WorkingDirectory $workDir -WindowStyle Hidden -PassThru
+  if ($p.WaitForExit(3000) -and $p.ExitCode -ne 0) {
+    throw "'$code $($codeArgs -join ' ')' failed (exit $($p.ExitCode)). For a WSL job the editor needs its WSL extension (Remote - WSL)."
+  }
+}
+
+# Open a plain shell (not claude) in the job folder: a Windows Terminal tab when wt is available, otherwise
+# a console window. WSL job -> a WSL shell, Windows job -> PowerShell. Started through Start-Process (ShellExecute)
+# so the shell does not inherit our stdout/stderr pipes (see Start-Editor).
+function Cmd-Shell($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  $wt = Get-Command wt -ErrorAction SilentlyContinue | Select-Object -First 1
+
+  if ((Get-JobTarget $cfg $Name) -eq 'windows') {
+    $dir = Require-WinJob $cfg
+    if ($wt) {
+      Start-Process -FilePath $wt.Source -ArgumentList @('-w', '0', 'new-tab', '--title', $Name, '-d', "`"$dir`"", 'powershell.exe', '-NoLogo')
+    } else {
+      Start-Process -FilePath powershell.exe -WorkingDirectory $dir -ArgumentList @('-NoLogo')
+    }
+    Write-Host "Opened a PowerShell terminal in $dir"
+    return
+  }
+
+  $dir = "$($cfg.jobsRoot)/$Name"
+  Invoke-Wsl $cfg @"
+cd $dir 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
+"@ | Out-Null
+  $wslArgs = @(Wsl-Args $cfg) + @('--cd', $dir)
+  if ($wt) {
+    Start-Process -FilePath $wt.Source -ArgumentList (@('-w', '0', 'new-tab', '--title', $Name, 'wsl.exe') + $wslArgs)
+  } else {
+    Start-Process -FilePath wsl.exe -ArgumentList $wslArgs
+  }
+  Write-Host "Opened a WSL terminal in $dir"
+}
+
 # The job's most recent Claude conversation: <claude home>/projects/<encoded folder>/<session id>.jsonl.
 # Used to start `claude --resume <id>` so a restart continues where the job left off. Prints JSON or null.
 function Cmd-LastSession($cfg) {
@@ -596,6 +674,8 @@ switch ($Command) {
   'doctor'    { Cmd-Doctor (Get-Config) }
   'usage'     { Cmd-Usage (Get-Config) }
   'last-session' { Cmd-LastSession (Get-Config) }
+  'code'      { Cmd-Code (Get-Config) }
+  'shell'     { Cmd-Shell (Get-Config) }
   'diff'      { Cmd-Diff (Get-Config) }
   'push'      { Cmd-Push (Get-Config) }
   'merge'     { Cmd-Merge (Get-Config) }
@@ -616,6 +696,8 @@ AgentLegion commands:
   merge <job> [-Base main] [-Push]  --no-ff merge job branch into base (local; -Push pushes base)
   usage <job> [-Json]           Claude token usage for the job (from ~/.claude transcripts)
   last-session <job> [-Json]    id of the job's most recent Claude conversation (for claude --resume)
+  code <job>                    open the job folder in the editor (code .; WSL jobs via Remote-WSL; "codeCmd" in legion.json)
+  shell <job>                   open a plain terminal (WSL shell or PowerShell) in the job folder, not claude
   doctor [-Target windows]      check WSL / Windows, git, claude, repo access, claude auth
   remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host

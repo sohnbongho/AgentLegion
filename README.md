@@ -61,6 +61,13 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
   대화가 없는 job(메시지 없이 열었다 닫은 기록 포함)은 자동으로 새 대화로 시작한다. 끄려면 `legion.json`에 `"resumeLastSession": false`.
   CLI: `.\legion.ps1 last-session <job> [-Json]` (WSL/Windows 모두).
 
+- **에디터로 열기**: Jobs 목록과 터미널 헤더의 **VS Code** 버튼이 그 job 폴더를 에디터로 연다.
+  에디터는 항상 **Windows 쪽에서** 실행한다. Windows job은 그 폴더에서 `code .`, WSL job은 `code --remote wsl+<배포판> <WSL 경로>`
+  (Remote-WSL 창)이므로, WSL에서 Windows 프로그램을 실행하지 못하는 환경(interop 고장)에서도 동작한다. 에디터에 WSL 확장이 필요하다.
+  `cursor`나 `code-insiders`를 쓰려면 `legion.json`에 `"codeCmd": "cursor"`. CLI: `.\legion.ps1 code <job>`.
+- **터미널 열기**: **Terminal** 버튼은 그 job 폴더에서 **일반 셸**(WSL job은 WSL 셸, Windows job은 PowerShell)을 Windows Terminal 새 탭으로 연다
+  (claude가 아니라 직접 명령을 칠 때 사용; `wt`가 없으면 일반 콘솔 창). 실행 중인 claude 세션에는 영향이 없다. CLI: `.\legion.ps1 shell <job>`.
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
