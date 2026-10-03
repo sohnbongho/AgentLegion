@@ -12,13 +12,17 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
 .\legion.ps1 init -Repo git@github.com:me/proj.git -Distro Ubuntu
 .\legion.ps1 add job1                       # ~/agentjobs/job1, branch agent/job1
 .\legion.ps1 add job2 -Branch feature/login
+.\legion.ps1 add job3 -Repo git@github.com:me/other.git   # job별 다른 repo
 .\legion.ps1 status
 .\legion.ps1 start job1                     # 새 탭에서 claude 실행
 .\legion.ps1 start-all
 .\legion.ps1 run job2 -Prompt "테스트 고치고 커밋해줘"
 .\legion.ps1 run job2 -Prompt "..." -TimeoutSec 300   # 기본 600초, 초과 시 오류
+.\legion.ps1 diff job1                      # base 대비 커밋/변경 요약
+.\legion.ps1 push job1                      # job branch를 origin에 push
+.\legion.ps1 merge job1 [-Push]             # job branch를 main에 --no-ff 병합 (-Push 시 main push)
 .\legion.ps1 doctor                         # WSL/git/claude/repo/인증 점검
-.\legion.ps1 remove job1
+.\legion.ps1 remove job1 [-Force]           # 미커밋/미push 작업이 있으면 -Force 필요
 ```
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`

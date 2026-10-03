@@ -18,7 +18,10 @@ param(
   [string]$Distro,
   [string]$Root,
   [string]$Prompt,
-  [int]$TimeoutSec = 600
+  [int]$TimeoutSec = 600,
+  [string]$Base,
+  [switch]$Push,
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +63,9 @@ function Cmd-Add($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
   $br = Get-JobBranch $cfg $Name
   Assert-Safe $br '^[A-Za-z0-9._/-]+$' 'branch'
-  $repo = $cfg.repo -replace "'", "'\''"
+  $repoUrl = if ($Repo) { $Repo } else { $cfg.repo }
+  Assert-Safe $repoUrl '^\S+$' 'repo'
+  $repo = $repoUrl -replace "'", "'\''"
   Invoke-Wsl $cfg @"
 set -e
 mkdir -p $($cfg.jobsRoot)
@@ -108,6 +113,50 @@ function Cmd-Run($cfg) {
   if ($LASTEXITCODE -ne 0) { throw "claude exited with code $LASTEXITCODE" }
 }
 
+# bash snippet: cd into the job and resolve $BASE (origin/HEAD, falling back to main)
+function Job-Prelude($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  if ($Base) { Assert-Safe $Base '^[A-Za-z0-9._/-]+$' 'base' }
+  @"
+set -e
+cd $($cfg.jobsRoot)/$Name
+BR=`$(git rev-parse --abbrev-ref HEAD)
+BASE='$Base'
+[ -n "`$BASE" ] || BASE=`$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+[ -n "`$BASE" ] || BASE=main
+"@
+}
+
+function Cmd-Diff($cfg) {
+  Invoke-Wsl $cfg ((Job-Prelude $cfg) + @"
+
+echo "== `$BR vs `$BASE =="
+git status --short
+git log --oneline `$BASE..`$BR 2>/dev/null || true
+git diff --stat `$BASE...`$BR 2>/dev/null || true
+"@)
+}
+
+function Cmd-Push($cfg) {
+  Invoke-Wsl $cfg ((Job-Prelude $cfg) + "`ngit push -u origin `"`$BR`"")
+}
+
+# Merge the job branch into the base branch inside the job clone. Pushes base only with -Push.
+function Cmd-Merge($cfg) {
+  $pushCmd = if ($Push) { 'git push origin "$BASE"' } else { 'echo "(not pushed; add -Push to push $BASE)"' }
+  Invoke-Wsl $cfg ((Job-Prelude $cfg) + @"
+
+[ -z "`$(git status --porcelain)" ] || { echo "uncommitted changes in $Name; commit or stash first" >&2; exit 1; }
+[ "`$BR" != "`$BASE" ] || { echo "$Name is already on `$BASE" >&2; exit 1; }
+git fetch origin 2>/dev/null || true
+git checkout "`$BASE"
+git merge --ff-only "origin/`$BASE" 2>/dev/null || true
+git merge --no-ff "`$BR" -m "Merge `$BR into `$BASE" || { git merge --abort; git checkout "`$BR"; echo "merge conflict; aborted" >&2; exit 1; }
+$pushCmd
+git checkout "`$BR"
+"@)
+}
+
 function Cmd-Doctor($cfg) {
   $state = @{ fail = 0 }
   function Check($label, $script, $hint) {
@@ -129,6 +178,14 @@ function Cmd-Doctor($cfg) {
 
 function Cmd-Remove($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  if (-not $Force) {
+    # refuse if there are uncommitted changes or commits not present on any remote branch
+    Invoke-Wsl $cfg @"
+cd $($cfg.jobsRoot)/$Name
+[ -z "`$(git status --porcelain)" ] || { echo "uncommitted changes in $Name (use -Force to delete anyway)" >&2; exit 1; }
+[ -z "`$(git log --branches --not --remotes --oneline)" ] || { echo "unpushed commits in $Name (push/merge them or use -Force)" >&2; exit 1; }
+"@
+  }
   Invoke-Wsl $cfg "rm -rf $($cfg.jobsRoot)/$Name"
   Write-Host "Removed $Name"
 }
@@ -145,6 +202,9 @@ switch ($Command) {
   }
   'run'       { Cmd-Run (Get-Config) }
   'doctor'    { Cmd-Doctor (Get-Config) }
+  'diff'      { Cmd-Diff (Get-Config) }
+  'push'      { Cmd-Push (Get-Config) }
+  'merge'     { Cmd-Merge (Get-Config) }
   'remove'    { Cmd-Remove (Get-Config) }
   default {
     @'
@@ -155,8 +215,12 @@ AgentLegion commands:
   start <job>                   open Windows Terminal tab running claude in that job
   start-all                     open a tab for every job
   run <job> -Prompt "<text>" [-TimeoutSec 600]   non-interactive claude -p in that job
+  add <job> -Repo <url>         use a different repo for this job
+  diff <job> [-Base main]       commits/changes of the job branch vs base
+  push <job>                    push the job branch to origin
+  merge <job> [-Base main] [-Push]  --no-ff merge job branch into base (local; -Push pushes base)
   doctor                        check WSL, git, claude, repo access, claude auth
-  remove <job>                  delete job folder
+  remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host
   }
 }
