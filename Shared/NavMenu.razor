@@ -1,39 +1,58 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">AgentLegion</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
+<div class="top-row navbar">
+    <a class="brand" href="" title="AgentLegion">
+        <span class="brand-mark" aria-hidden="true">AL</span>
+        <span class="brand-name">AgentLegion</span>
+    </a>
+    <button title="Navigation menu" class="navbar-toggler" aria-expanded="@(!collapseNavMenu)" @onclick="ToggleNavMenu">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+</div>
+
+<div class="@NavMenuCssClass nav-scrollable" @onclick="CloseNavMenu">
+    <nav class="flex-column" aria-label="Main">
+        @foreach (var group in groups)
+        {
+            <div class="nav-section">@group.Title</div>
+            @foreach (var item in group.Items)
+            {
+                <div class="nav-item">
+                    <NavLink class="nav-link" href="@item.Href" Match="@item.Match">
+                        <span class="oi @item.Icon" aria-hidden="true"></span>
+                        <span class="nav-label">@item.Label</span>
+                    </NavLink>
+                </div>
+            }
+        }
+    </nav>
+
+    <div class="nav-footer">
+        <span class="status-dot" aria-hidden="true"></span>
+        WSL workspace
     </div>
 </div>
 
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
-    <nav class="flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="oi oi-home" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="oi oi-plus" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="fetchdata">
-                <span class="oi oi-list-rich" aria-hidden="true"></span> Fetch data
-            </NavLink>
-        </div>
-    </nav>
-</div>
-
 @code {
+    private record NavItem(string Label, string Href, string Icon, NavLinkMatch Match = NavLinkMatch.Prefix);
+    private record NavSection(string Title, NavItem[] Items);
+
+    private static readonly NavSection[] groups =
+    {
+        new("Workspace", new[]
+        {
+            new NavItem("Dashboard", "", "oi-dashboard", NavLinkMatch.All),
+            new NavItem("Jobs", "jobs", "oi-layers"),
+        }),
+        new("System", new[]
+        {
+            new NavItem("Settings", "settings", "oi-cog"),
+        }),
+    };
+
     private bool collapseNavMenu = true;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
-    }
+    private void ToggleNavMenu() => collapseNavMenu = !collapseNavMenu;
+
+    private void CloseNavMenu() => collapseNavMenu = true;
 }
