@@ -47,6 +47,14 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
 - **WSL 정보**: 사이드바 하단(배포판 이름, WSL 버전, 실행 상태)과 job 상단바 칩에 표시되고, 마우스를 올리면 WSL 패키지 버전·OS·커널·사용자@호스트가 보인다.
   30초마다 갱신한다. 상세 정보는 **이미 실행 중인 배포판에서만** 조회하므로, 꺼져 있는 배포판을 깨우지 않는다.
 
+- **Windows PowerShell job**(예: Unity 작업): job을 추가할 때 Environment에서 `Windows PowerShell`을 고르면, WSL이 아니라 **Windows에서
+  `powershell.exe` → `claude`** 로 실행된다. 폴더는 `%USERPROFILE%\agentjobs\<job>`(Settings의 *Jobs root (Windows PowerShell)*로 변경)에
+  clone되고, 같은 방식으로 `agent/<job>` 브랜치를 쓴다. 사이드바에는 `PS` 태그, 목록에는 `PowerShell` 배지가 붙는다.
+  Windows에 `git`과 `claude`가 설치되어 있어야 하며(`legion.ps1 doctor -Target windows`로 점검), 새 폴더에서 처음 실행하면
+  claude의 "이 폴더를 신뢰하시겠습니까?" 확인이 터미널에 나타난다. job 이름은 WSL/Windows 전체에서 유일해야 한다.
+  CLI: `.\legion.ps1 add unity1 -Target windows -Repo <url>` (그 외 명령은 job이 있는 환경을 자동으로 찾는다).
+  Windows job의 토큰 사용량은 `%USERPROFILE%\.claude\projects`에서 집계한다(python 불필요).
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`

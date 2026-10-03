@@ -5,7 +5,10 @@ using System.Text.Json;
 namespace AgentLegion.Services
 {
     /// <param name="Repo">The job's origin URL (credentials already stripped), empty if it has no remote.</param>
-    public record JobInfo(string Job, string Branch, int Changes, string? Repo = null);
+    public record JobInfo(string Job, string Branch, int Changes, string? Repo = null, string Env = "wsl", string? Path = null)
+    {
+        public bool IsWindows => Env.Equals("windows", StringComparison.OrdinalIgnoreCase);
+    }
 
     public record JobsResult(IReadOnlyList<JobInfo> Jobs, string? Error);
 
@@ -18,8 +21,17 @@ namespace AgentLegion.Services
         public long Billable => Input + Output + CacheCreate;
     }
 
+    /// <param name="WindowsJobsRoot">Where Windows PowerShell jobs live; null = the default %USERPROFILE%\agentjobs.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
-        SessionStateDetection StateDetection = SessionStateDetection.Title);
+        SessionStateDetection StateDetection = SessionStateDetection.Title,
+        string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude")
+    {
+        public const string DefaultWindowsRoot = @"%USERPROFILE%\agentjobs";
+
+        /// <summary>The Windows jobs root with environment variables expanded.</summary>
+        public string ResolvedWindowsRoot =>
+            Environment.ExpandEnvironmentVariables(string.IsNullOrWhiteSpace(WindowsJobsRoot) ? DefaultWindowsRoot : WindowsJobsRoot);
+    }
 
     /// <summary>Thin wrapper that runs legion.ps1 and parses its output.</summary>
     public class LegionService
@@ -69,7 +81,8 @@ namespace AgentLegion.Services
                 var detection = string.Equals(Str("stateDetection"), "activity", StringComparison.OrdinalIgnoreCase)
                     ? SessionStateDetection.Activity
                     : SessionStateDetection.Title;
-                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude", detection);
+                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude",
+                    detection, Str("windowsJobsRoot"), Str("windowsClaudeCmd") ?? "claude");
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -77,18 +90,21 @@ namespace AgentLegion.Services
             }
         }
 
-        public Task<CommandResult> SaveConfigAsync(string? distro, string jobsRoot, string repo)
+        public Task<CommandResult> SaveConfigAsync(string? distro, string jobsRoot, string repo, string? windowsRoot = null)
         {
             var args = new List<string> { "init", "-Repo", repo.Trim(), "-Root", jobsRoot.Trim() };
             if (!string.IsNullOrWhiteSpace(distro)) args.AddRange(new[] { "-Distro", distro.Trim() });
+            if (!string.IsNullOrWhiteSpace(windowsRoot)) args.AddRange(new[] { "-WindowsRoot", windowsRoot.Trim() });
             return RunAsync(DefaultTimeout, args.ToArray());
         }
 
-        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo)
+        /// <param name="windows">true = a native Windows PowerShell job (e.g. Unity), false = a WSL job.</param>
+        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false)
         {
             var args = new List<string> { "add", job.Trim() };
             if (!string.IsNullOrWhiteSpace(branch)) args.AddRange(new[] { "-Branch", branch.Trim() });
             if (!string.IsNullOrWhiteSpace(repo)) args.AddRange(new[] { "-Repo", repo.Trim() });
+            if (windows) args.AddRange(new[] { "-Target", "windows" });
             return RunAsync(NetworkTimeout, args.ToArray());
         }
 

@@ -90,7 +90,8 @@ namespace AgentLegion.Services
                 if (_sessions.TryGetValue(job, out var existing) && existing.IsRunning) return existing;
                 existing?.Dispose();
                 var cfg = _legion.LoadConfig() ?? throw new InvalidOperationException("Not configured. Set up Settings first.");
-                session = PtySession.Start(BuildCommandLine(job, cfg), cols, rows, cfg.StateDetection);
+                var (commandLine, workingDirectory) = BuildLaunch(job, cfg);
+                session = PtySession.Start(commandLine, cols, rows, cfg.StateDetection, workingDirectory);
                 _sessions[job] = session;
             }
             session.Exited += () => Changed?.Invoke();
@@ -109,9 +110,28 @@ namespace AgentLegion.Services
             Changed?.Invoke();
         }
 
-        private static string BuildCommandLine(string job, LegionConfig cfg)
+        /// <summary>
+        /// A job lives in one environment. A folder in the Windows jobs root makes it a Windows PowerShell job;
+        /// otherwise it is a WSL job (the same rule legion.ps1 uses).
+        /// </summary>
+        private static (string CommandLine, string? WorkingDirectory) BuildLaunch(string job, LegionConfig cfg)
         {
             if (!JobName.IsMatch(job)) throw new ArgumentException($"Invalid job name: '{job}'");
+
+            var winDir = Path.Combine(cfg.ResolvedWindowsRoot, job);
+            if (Directory.Exists(Path.Combine(winDir, ".git")))
+            {
+                // Native Windows: PowerShell runs claude in the job folder; the session ends when claude exits.
+                // The command comes from the local config file (like claudeCmd for WSL).
+                var cmd = cfg.WindowsClaudeCmd.Replace("\"", "\\\"");
+                return ($"powershell.exe -NoLogo -Command \"{cmd}\"", winDir);
+            }
+
+            return (BuildWslCommandLine(job, cfg), null);
+        }
+
+        private static string BuildWslCommandLine(string job, LegionConfig cfg)
+        {
             if (!RootPath.IsMatch(cfg.JobsRoot)) throw new InvalidOperationException($"Invalid jobs root: '{cfg.JobsRoot}'");
 
             var distro = "";

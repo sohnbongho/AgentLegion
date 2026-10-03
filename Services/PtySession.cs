@@ -156,15 +156,15 @@ namespace AgentLegion.Services
 
         /// <summary>Starts <paramref name="commandLine"/> in a new pseudo console of the given size.</summary>
         public static PtySession Start(string commandLine, int cols, int rows,
-            SessionStateDetection detection = SessionStateDetection.Title)
+            SessionStateDetection detection = SessionStateDetection.Title, string? workingDirectory = null)
         {
             var s = new PtySession { _detection = detection };
-            try { s.StartCore(commandLine, cols, rows); }
+            try { s.StartCore(commandLine, cols, rows, workingDirectory); }
             catch { s.Dispose(); throw; }
             return s;
         }
 
-        private void StartCore(string commandLine, int cols, int rows)
+        private void StartCore(string commandLine, int cols, int rows, string? workingDirectory)
         {
             if (!NativePty.CreatePipe(out var inRead, out var inWrite, IntPtr.Zero, 0) ||
                 !NativePty.CreatePipe(out var outRead, out var outWrite, IntPtr.Zero, 0))
@@ -197,7 +197,7 @@ namespace AgentLegion.Services
                     throw new Win32Exception(Marshal.GetLastWin32Error());
 
                 if (!NativePty.CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
-                        NativePty.EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref si, out var pi))
+                        NativePty.EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, workingDirectory, ref si, out var pi))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
 
                 NativePty.CloseHandle(pi.hThread);

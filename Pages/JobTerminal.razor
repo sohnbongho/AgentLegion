@@ -11,6 +11,10 @@
 <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
     <h1 class="h3 mb-0 me-2">@Name</h1>
     <span class="badge @StateBadge(Sessions.GetState(Name))">@Sessions.GetState(Name).Label()</span>
+    @if (Store.Jobs.FirstOrDefault(j => j.Job == Name) is { IsWindows: true })
+    {
+        <span class="badge bg-info text-dark" title="claude runs in Windows PowerShell">PowerShell</span>
+    }
     <div class="ms-auto d-flex gap-2">
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)

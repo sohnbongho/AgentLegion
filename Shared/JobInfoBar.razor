@@ -20,10 +20,16 @@
                 <span class="oi oi-link-intact" aria-hidden="true"></span> @ShortRepo(Repo)
             </span>
         }
-        <span class="chip" title="Folder (WSL)">
+        <span class="chip" title="@(IsWindows ? "Folder (Windows)" : "Folder (WSL)")">
             <span class="oi oi-folder" aria-hidden="true"></span> @Folder
         </span>
-        @if (Wsl.Current is { } wsl)
+        @if (IsWindows)
+        {
+            <span class="chip" title="This job runs claude in Windows PowerShell (not in WSL)">
+                <span class="oi oi-terminal" aria-hidden="true"></span> Windows PowerShell
+            </span>
+        }
+        else if (Wsl.Current is { } wsl)
         {
             <span class="chip" title="@WslTooltip(wsl)">
                 <span class="oi oi-terminal" aria-hidden="true"></span>
@@ -58,16 +64,21 @@
     private string? Branch => Store.Jobs.FirstOrDefault(j => j.Job == job)?.Branch;
     private string? Repo => Store.Jobs.FirstOrDefault(j => j.Job == job)?.Repo;
 
-    // https://github.com/org/proj.git -> org/proj, git@host:org/proj.git -> org/proj, /home/me/x/y -> x/y
+    // https://github.com/org/proj.git -> org/proj, git@host:org/proj.git -> org/proj, /home/me/x/y or C:\x\y -> x/y
     private static string ShortRepo(string url)
     {
         var s = url.Trim().TrimEnd('/');
         if (s.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) s = s[..^4];
-        var parts = s.Split(new[] { '/', ':' }, StringSplitOptions.RemoveEmptyEntries);
+        var parts = s.Split(new[] { '/', '\\', ':' }, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length >= 2 ? $"{parts[^2]}/{parts[^1]}" : s;
     }
 
-    private string Folder => $"{Legion.JobsRoot.TrimEnd('/')}/{job}";
+    private JobInfo? CurrentJob => Store.Jobs.FirstOrDefault(j => j.Job == job);
+
+    private bool IsWindows => CurrentJob?.IsWindows == true;
+
+    // The script reports each job's real folder; fall back to the WSL layout until the list has loaded.
+    private string Folder => CurrentJob?.Path ?? $"{Legion.JobsRoot.TrimEnd('/')}/{job}";
 
     private string UsageTooltip => usage is null
         ? (usageError ?? "Token usage")

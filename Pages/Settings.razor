@@ -33,6 +33,15 @@
 </div>
 
 <div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="winroot">Jobs root (Windows PowerShell)</label>
+    <input id="winroot" class="form-control" @bind="windowsRoot" placeholder="@LegionConfig.DefaultWindowsRoot" />
+    <div class="form-text">
+        Windows PowerShell job(예: Unity 작업)이 <code>&lt;root&gt;\&lt;job&gt;</code>에 clone됩니다. 비워두면 <code>@LegionConfig.DefaultWindowsRoot</code>.
+        Windows에 <code>git</code>과 <code>claude</code>가 설치되어 있어야 합니다.
+    </div>
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
     <label class="form-label" for="repo">Default repo</label>
     <input id="repo" class="form-control" @bind="repo" placeholder="git@github.com:me/proj.git" />
     <div class="form-text">URL 또는 WSL 절대경로(<code>~</code>는 사용할 수 없음). job마다 따로 지정할 수도 있습니다.</div>
@@ -59,6 +68,7 @@
 @code {
     private string? distro;
     private string jobsRoot = "~/agentjobs";
+    private string windowsRoot = "";
     private string repo = "";
     private IReadOnlyList<string> distros = Array.Empty<string>();
     private bool saving;
@@ -71,6 +81,7 @@
         {
             distro = cfg.Distro;
             jobsRoot = cfg.JobsRoot;
+            windowsRoot = cfg.WindowsJobsRoot ?? "";
             repo = cfg.Repo;
         }
         distros = await Legion.GetDistrosAsync();
@@ -82,7 +93,7 @@
         result = null;
         try
         {
-            result = await Legion.SaveConfigAsync(distro, jobsRoot, repo);
+            result = await Legion.SaveConfigAsync(distro, jobsRoot, repo, windowsRoot);
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally
