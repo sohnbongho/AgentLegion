@@ -18,6 +18,7 @@ namespace AgentLegion
             builder.Services.AddSingleton<LegionService>();
             builder.Services.AddSingleton<JobStore>();
             builder.Services.AddSingleton<SessionManager>();
+            builder.Services.AddSingleton<WslInfoService>();
 
             var app = builder.Build();
 

@@ -45,9 +45,18 @@
         }
     </nav>
 
-    <div class="nav-footer">
-        <span class="status-dot" aria-hidden="true"></span>
-        WSL workspace
+    <div class="nav-footer" title="@WslTooltip">
+        <span class="status-dot @(Wsl.Current is { Running: true } ? "on" : "off")" aria-hidden="true"></span>
+        @if (Wsl.Current is { } w)
+        {
+            <span class="wsl-name">@w.Distro</span>
+            <span class="wsl-meta">WSL@(w.Version) · @(w.Running ? "실행 중" : "중지됨")</span>
+        }
+        else
+        {
+            <span class="wsl-name">WSL</span>
+            <span class="wsl-meta">@(Store.IsConfigured ? "확인 중…" : "설정 필요")</span>
+        }
     </div>
 </div>
 
@@ -55,6 +64,7 @@
 @using AgentLegion.Services
 @inject JobStore Store
 @inject SessionManager Sessions
+@inject WslInfoService Wsl
 
 @code {
     private record NavItem(string Label, string Href, string Icon, NavLinkMatch Match = NavLinkMatch.Prefix);
@@ -82,7 +92,39 @@
         Sessions.Changed += OnJobsChanged;
         // Listing shells out to WSL; don't hold up the first paint for it.
         if (!Store.Loaded) _ = Store.EnsureLoadedAsync();
+        Wsl.Changed += OnJobsChanged;
     }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Only the live circuit polls WSL (not the prerender pass).
+        if (firstRender) _ = PollWslAsync();
+    }
+
+    private async Task PollWslAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try
+        {
+            do { await Wsl.RefreshAsync(); }
+            while (await timer.WaitForNextTickAsync(wslCts.Token));
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private readonly CancellationTokenSource wslCts = new();
+
+    private string WslTooltip => Wsl.Current is not { } w
+        ? "WSL 정보를 확인하는 중입니다"
+        : string.Join("\n", new[]
+        {
+            $"Distribution: {w.Distro}{(w.IsDefault ? " (default)" : "")}",
+            $"State: {(w.Running ? "Running" : "Stopped")} · WSL{w.Version}",
+            w.WslVersion is null ? null : $"WSL version: {w.WslVersion}",
+            w.Os is null ? null : $"OS: {w.Os}",
+            w.Kernel is null ? null : $"Kernel: {w.Kernel}",
+            w.User is null ? null : $"User: {w.User}@{w.Host}",
+        }.Where(l => l is not null));
 
     private void OnJobsChanged()
     {
@@ -98,6 +140,9 @@
         disposed = true;
         Store.Changed -= OnJobsChanged;
         Sessions.Changed -= OnJobsChanged;
+        Wsl.Changed -= OnJobsChanged;
+        wslCts.Cancel();
+        wslCts.Dispose();
     }
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;

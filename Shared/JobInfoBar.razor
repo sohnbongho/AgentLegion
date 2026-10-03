@@ -3,6 +3,7 @@
 @inject NavigationManager Nav
 @inject JobStore Store
 @inject LegionService Legion
+@inject WslInfoService Wsl
 
 @if (job is not null)
 {
@@ -22,6 +23,14 @@
         <span class="chip" title="Folder (WSL)">
             <span class="oi oi-folder" aria-hidden="true"></span> @Folder
         </span>
+        @if (Wsl.Current is { } wsl)
+        {
+            <span class="chip" title="@WslTooltip(wsl)">
+                <span class="oi oi-terminal" aria-hidden="true"></span>
+                <span class="wsl-dot @(wsl.Running ? "on" : "off")" aria-hidden="true"></span>
+                @wsl.Summary
+            </span>
+        }
         <span class="chip" title="@UsageTooltip">
             <span class="oi oi-bar-chart" aria-hidden="true"></span>
             @if (usage is not null)
@@ -72,7 +81,18 @@
         job = JobFromUri(Nav.Uri);
         Nav.LocationChanged += OnLocationChanged;
         Store.Changed += OnStoreChanged; // branch comes from the cached job list
+        Wsl.Changed += OnStoreChanged;
     }
+
+    private static string WslTooltip(WslInfo w) => string.Join("\n", new[]
+    {
+        $"Distribution: {w.Distro}{(w.IsDefault ? " (default)" : "")}",
+        $"State: {(w.Running ? "Running" : "Stopped")} · WSL{w.Version}",
+        w.WslVersion is null ? null : $"WSL version: {w.WslVersion}",
+        w.Os is null ? null : $"OS: {w.Os}",
+        w.Kernel is null ? null : $"Kernel: {w.Kernel}",
+        w.User is null ? null : $"User: {w.User}@{w.Host}",
+    }.Where(l => l is not null));
 
     private void OnStoreChanged()
     {
@@ -160,6 +180,7 @@
         disposed = true;
         Nav.LocationChanged -= OnLocationChanged;
         Store.Changed -= OnStoreChanged;
+        Wsl.Changed -= OnStoreChanged;
         loopCts?.Cancel();
         loopCts?.Dispose();
     }

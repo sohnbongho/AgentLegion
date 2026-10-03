@@ -29,3 +29,17 @@
     color: #6b7280;
     font-size: 0.75rem;
 }
+
+.wsl-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+}
+
+.wsl-dot.on {
+    background: #22c55e;
+}
+
+.wsl-dot.off {
+    background: #9ca3af;
+}

@@ -44,6 +44,9 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
   `legion.json`의 `"stateDetection": "activity"`로 바꾸면 Claude가 아닌 프로그램용으로 "출력이 계속 나오면 진행 중"으로 판정한다.
   (제목이 꺼진 환경 — `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, 상태 접두어를 쓰지 않는 설정 — 에서는 항상 `응답 대기`로 보일 수 있다.)
 
+- **WSL 정보**: 사이드바 하단(배포판 이름, WSL 버전, 실행 상태)과 job 상단바 칩에 표시되고, 마우스를 올리면 WSL 패키지 버전·OS·커널·사용자@호스트가 보인다.
+  30초마다 갱신한다. 상세 정보는 **이미 실행 중인 배포판에서만** 조회하므로, 꺼져 있는 배포판을 깨우지 않는다.
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`

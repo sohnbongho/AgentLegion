@@ -203,3 +203,21 @@
 .job-state + .job-changes {
     margin-left: 0.4rem;
 }
+
+.status-dot.off {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.nav-footer .wsl-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.nav-footer .wsl-meta {
+    margin-left: auto;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.5);
+}
