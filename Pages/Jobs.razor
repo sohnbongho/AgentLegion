@@ -1,6 +1,70 @@
 @page "/jobs"
+@using AgentLegion.Services
+@inject LegionService Legion
 
 <PageTitle>Jobs - AgentLegion</PageTitle>
 
-<h1>Jobs</h1>
-<p>WSL의 <code>~/agentjobs/&lt;job&gt;</code> 목록이 여기에 표시됩니다. (준비 중)</p>
+<div class="d-flex align-items-center mb-3">
+    <h1 class="me-auto mb-0">Jobs</h1>
+    <button class="btn btn-outline-primary" disabled="@loading" @onclick="LoadAsync">
+        @(loading ? "Loading..." : "Refresh")
+    </button>
+</div>
+
+@if (error is not null)
+{
+    <div class="alert alert-danger" role="alert">@error</div>
+}
+else if (loading && jobs is null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (jobs is { Count: 0 })
+{
+    <p class="text-muted">No jobs yet. Create one with <code>.\legion.ps1 add job1</code>.</p>
+}
+else if (jobs is not null)
+{
+    <table class="table align-middle">
+        <thead>
+            <tr><th>Job</th><th>Branch</th><th class="text-end">Changes</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var j in jobs)
+            {
+                <tr>
+                    <td>@j.Job</td>
+                    <td><code>@j.Branch</code></td>
+                    <td class="text-end">
+                        @if (j.Changes == 0)
+                        {
+                            <span class="badge bg-success">clean</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning text-dark">@j.Changes modified</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<JobInfo>? jobs;
+    private string? error;
+    private bool loading;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        error = null;
+        var result = await Legion.GetJobsAsync();
+        jobs = result.Jobs;
+        error = result.Error;
+        loading = false;
+    }
+}

@@ -21,7 +21,8 @@ param(
   [int]$TimeoutSec = 600,
   [string]$Base,
   [switch]$Push,
-  [switch]$Force
+  [switch]$Force,
+  [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
@@ -78,17 +79,23 @@ echo "$Name -> `$(git rev-parse --abbrev-ref HEAD)"
 }
 
 function Cmd-List($cfg) {
-  Invoke-Wsl $cfg @"
-cd $($cfg.jobsRoot) 2>/dev/null || { echo 'no jobs yet'; exit 0; }
-printf '%-12s %-30s %s\n' JOB BRANCH CHANGES
+  $lines = Invoke-Wsl $cfg @"
+cd $($cfg.jobsRoot) 2>/dev/null || exit 0
 for d in */; do
   d=`${d%/}
   [ -d "`$d/.git" ] || continue
   b=`$(git -C "`$d" rev-parse --abbrev-ref HEAD)
   n=`$(git -C "`$d" status --porcelain | wc -l)
-  printf '%-12s %-30s %s\n' "`$d" "`$b" "`$n"
+  printf '%s\t%s\t%s\n' "`$d" "`$b" "`$n"
 done
 "@
+  $jobs = @($lines | Where-Object { $_ } | ForEach-Object {
+    $f = $_ -split "`t"
+    [pscustomobject]@{ Job = $f[0]; Branch = $f[1]; Changes = [int]$f[2] }
+  })
+  if ($Json) { ConvertTo-Json -InputObject $jobs -Compress }
+  elseif ($jobs.Count -eq 0) { Write-Host 'no jobs yet' }
+  else { $jobs | Format-Table -AutoSize | Out-String | Write-Host }
 }
 
 function Start-Job-Tab($cfg, $name) {
@@ -211,7 +218,7 @@ switch ($Command) {
 AgentLegion commands:
   init -Repo <url> [-Distro <name>] [-Root ~/agentjobs]   write legion.json
   add <job> [-Branch <name>]    clone repo to <root>/<job>, checkout branch (default agent/<job>)
-  list | status                 show jobs, branches, uncommitted changes
+  list | status [-Json]         show jobs, branches, uncommitted changes
   start <job>                   open Windows Terminal tab running claude in that job
   start-all                     open a tab for every job
   run <job> -Prompt "<text>" [-TimeoutSec 600]   non-interactive claude -p in that job

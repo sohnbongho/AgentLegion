@@ -1,4 +1,5 @@
 using AgentLegion.Data;
+using AgentLegion.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -14,6 +15,7 @@ namespace AgentLegion
             builder.Services.AddRazorPages();
             builder.Services.AddServerSideBlazor();
             builder.Services.AddSingleton<WeatherForecastService>();
+            builder.Services.AddSingleton<LegionService>();
 
             var app = builder.Build();
 
