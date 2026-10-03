@@ -6,4 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The Web SDK copies every *.json to bin\ and into publish output. Personal settings must never travel that way:
+         a copy next to the exe would silently diverge from the real settings. -->
+    <Content Remove="legion.json" />
+    <Content Remove="jobs.json" />
+    <None Remove="legion.json" />
+    <None Remove="jobs.json" />
+
+    <!-- The script the app calls is shipped next to the exe (build output and publish), so an exe started by hand finds it. -->
+    <None Update="legion.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

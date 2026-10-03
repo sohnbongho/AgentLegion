@@ -80,7 +80,9 @@ WSL 칩과 사이드바 하단에 마우스를 올리면 WSL 패키지 버전·O
 - `Ctrl+V`는 텍스트 붙여넣기에 쓰이므로, claude의 클립보드 **이미지** 붙여넣기 단축키는 환경에 따라 다른 키를 써야 합니다.
 
 ## 설정 파일
-프로젝트 폴더(`legion.ps1`과 같은 위치)에 만들어지며 모두 git에서 제외됩니다.
+사용자 폴더 **`%LOCALAPPDATA%\AgentLegion`**(예: `C:\Users\<이름>\AppData\Local\AgentLegion`)에 저장됩니다.
+exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배포 패키지) 같은 PC에서는 같은 설정을 씁니다.
+위치를 바꾸려면 환경 변수 `AGENTLEGION_HOME`을 지정하세요. 이전 버전처럼 `legion.ps1` 옆에 있던 `legion.json`/`jobs.json`은 처음 실행할 때 **복사**됩니다(원본은 그대로 둠).
 
 | 파일 | 내용 |
 |---|---|
@@ -131,9 +133,9 @@ deploy.bat /rid win-arm64   :: 다른 아키텍처
 deploy.bat /nozip           :: zip 생략
 ```
 - 소스를 임시 폴더로 복사해 publish하므로 Visual Studio의 `bin`/`obj`를 건드리지 않습니다. `dist\`는 git에서 제외됩니다.
-- 패키지에는 `AgentLegion.exe`, `legion.ps1`, `run.bat`, `README-DEPLOY.txt`가 들어갑니다. **개인 설정(`legion.json`, `jobs.json`, `logs`)은 넣지 않습니다.**
+- 패키지에는 `AgentLegion.exe`, `legion.ps1`, `run.bat`, `README-DEPLOY.txt`가 들어갑니다. 설정은 패키지가 아니라 받는 PC의 `%LOCALAPPDATA%\AgentLegion`에 저장되므로 **개인 설정은 패키지에 들어가지 않습니다.**
 - 받는 PC: 압축을 풀고 `run.bat`(포트 변경 `run.bat 6000`)을 실행 → Settings 저장. git과 Claude Code(WSL job이면 WSL 안에, Windows job이면 Windows에)가 필요합니다.
-- 새 버전으로 교체할 때는 설정 파일을 지우지 말고 나머지만 덮어쓰면 됩니다.
+- 새 버전으로 교체해도 설정은 그대로입니다(패키지 폴더를 통째로 바꿔도 됩니다). 같은 PC에서 개발 빌드와 패키지를 번갈아 실행해도 같은 설정을 씁니다.
 
 ## 문제 해결
 - **환경 점검**: `.\legion.ps1 doctor` (Windows job은 `-Target windows`).

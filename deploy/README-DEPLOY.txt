@@ -26,8 +26,14 @@ AgentLegion - 배포 패키지
 - AgentLegion.exe 와 dll  : 앱 본체
 - legion.ps1             : job을 관리하는 스크립트 (앱이 호출합니다. 이 폴더에서 옮기지 마세요)
 - run.bat                : 실행기
-- legion.json / jobs.json / logs\ : 이 PC의 설정과 기록입니다. 처음 저장할 때 이 폴더에 만들어지며,
-  패키지에는 들어 있지 않습니다. 새 버전으로 교체할 때는 이 파일들을 지우지 말고 나머지만 덮어쓰세요.
+
+설정과 기록의 위치
+------------------
+설정(legion.json), 이름/폴더를 바꾼 job 정보(jobs.json), 로그(logs\)는 이 폴더가 아니라
+  %LOCALAPPDATA%\AgentLegion   (예: C:\Users\<이름>\AppData\Local\AgentLegion)
+에 저장됩니다. 그래서 패키지에는 들어 있지 않고, 압축을 푼 위치나 실행 방법(run.bat, exe 직접 실행)과
+상관없이 이 PC에서는 항상 같은 설정을 씁니다. 새 버전으로 교체할 때 이 폴더는 건드리지 마세요.
+설정을 처음부터 다시 하려면 위 폴더를 지우면 됩니다. 위치를 바꾸려면 환경 변수 AGENTLEGION_HOME을 지정하세요.
 
 문제 해결
 ---------

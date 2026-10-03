@@ -31,7 +31,27 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ConfigPath = Join-Path $PSScriptRoot 'legion.json'
+
+# Settings (legion.json), the job registry (jobs.json) and logs live in one per-user folder, independent of where this
+# script or the exe happens to be, so every way of starting the app sees the same data.
+#   AGENTLEGION_HOME overrides it (tests, portable setups); default %LOCALAPPDATA%\AgentLegion.
+function Get-DataDir {
+  $d = if ($env:AGENTLEGION_HOME) { [Environment]::ExpandEnvironmentVariables($env:AGENTLEGION_HOME) }
+       else { Join-Path $env:LOCALAPPDATA 'AgentLegion' }
+  New-Item -ItemType Directory -Force -Path $d | Out-Null
+  $d
+}
+$DataDir = Get-DataDir
+$ConfigPath = Join-Path $DataDir 'legion.json'
+
+# Older versions kept these files next to legion.ps1: copy them over once (never overwrite, never delete the originals).
+foreach ($f in 'legion.json', 'jobs.json') {
+  $src = Join-Path $PSScriptRoot $f
+  $dst = Join-Path $DataDir $f
+  if ((Test-Path -LiteralPath $src) -and -not (Test-Path -LiteralPath $dst) -and ($PSScriptRoot.TrimEnd('\') -ine $DataDir.TrimEnd('\'))) {
+    Copy-Item -LiteralPath $src -Destination $dst
+  }
+}
 
 function Assert-Safe($value, $pattern, $what) {
   if ($value -notmatch $pattern) { throw "Invalid $what`: '$value'" }
@@ -53,7 +73,7 @@ function Get-Opt($cfg, $name, $default) {
 # A job normally lives at <jobs root>/<name> and is found by scanning the root. jobs.json lists only the jobs
 # whose name or folder differs from that layout (renamed or moved by `edit`):
 #   { "alpha": { "env": "wsl", "path": "/home/me/agentjobs/job1" } }
-$RegistryPath = Join-Path $PSScriptRoot 'jobs.json'
+$RegistryPath = Join-Path $DataDir 'jobs.json'
 
 function Get-Registry {
   $h = @{}   # PowerShell hashtables compare keys case-insensitively

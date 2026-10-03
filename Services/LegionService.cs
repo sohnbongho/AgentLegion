@@ -47,11 +47,67 @@ namespace AgentLegion.Services
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         private readonly string _scriptPath;
+        private readonly string _dataDir;
 
         public LegionService(IWebHostEnvironment env, IConfiguration config)
         {
-            _scriptPath = config["Legion:ScriptPath"] ?? Path.Combine(env.ContentRootPath, "legion.ps1");
+            _scriptPath = config["Legion:ScriptPath"] ?? FindScript(env.ContentRootPath);
+            _dataDir = ResolveDataDir(config);
+            MigrateLegacyData();
         }
+
+        /// <summary>
+        /// Finds legion.ps1 however the exe was started: the working directory (Visual Studio, `dotnet run`, run.bat),
+        /// the exe's own folder (double-clicked, started from another folder), or the project folder above bin\Debug.
+        /// </summary>
+        private static string FindScript(string contentRoot)
+        {
+            foreach (var dir in new[] { contentRoot, AppContext.BaseDirectory })
+            {
+                var p = Path.Combine(dir, "legion.ps1");
+                if (File.Exists(p)) return p;
+            }
+            var d = new DirectoryInfo(AppContext.BaseDirectory);
+            for (var i = 0; i < 6 && d?.Parent is not null; i++)
+            {
+                d = d.Parent;
+                var p = Path.Combine(d.FullName, "legion.ps1");
+                if (File.Exists(p)) return p;
+            }
+            return Path.Combine(contentRoot, "legion.ps1");
+        }
+
+        /// <summary>
+        /// Where settings (legion.json), the job registry (jobs.json) and logs live: one per-user folder, so the data
+        /// does not depend on which exe or folder the app is started from. AGENTLEGION_HOME (or Legion:DataDir) overrides it.
+        /// </summary>
+        private static string ResolveDataDir(IConfiguration config)
+        {
+            var configured = config["Legion:DataDir"] ?? Environment.GetEnvironmentVariable("AGENTLEGION_HOME");
+            var dir = !string.IsNullOrWhiteSpace(configured)
+                ? Environment.ExpandEnvironmentVariables(configured)
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentLegion");
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        // Older versions kept the files next to legion.ps1: copy them over once (never overwrite, never delete).
+        private void MigrateLegacyData()
+        {
+            var legacy = Path.GetDirectoryName(_scriptPath);
+            if (legacy is null || SamePath(legacy, _dataDir)) return;
+            foreach (var name in new[] { "legion.json", "jobs.json" })
+            {
+                var from = Path.Combine(legacy, name);
+                var to = Path.Combine(_dataDir, name);
+                if (!File.Exists(from) || File.Exists(to)) continue;
+                try { File.Copy(from, to); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* legion.ps1 retries the copy */ }
+            }
+        }
+
+        private static bool SamePath(string a, string b) =>
+            string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'), Path.GetFullPath(b).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
         public async Task<JobsResult> GetJobsAsync()
         {
@@ -68,12 +124,12 @@ namespace AgentLegion.Services
             }
         }
 
-        private string ConfigPath => Path.Combine(Path.GetDirectoryName(_scriptPath)!, "legion.json");
+        private string ConfigPath => Path.Combine(_dataDir, "legion.json");
 
         public bool IsConfigured => File.Exists(ConfigPath);
 
-        /// <summary>Folder next to legion.ps1; used for diagnostics logs.</summary>
-        public string DataDir => Path.GetDirectoryName(_scriptPath)!;
+        /// <summary>Per-user data folder: legion.json, jobs.json and logs.</summary>
+        public string DataDir => _dataDir;
 
         /// <summary>Reads legion.json, or null if it is missing or unreadable.</summary>
         public LegionConfig? LoadConfig()
@@ -246,6 +302,8 @@ namespace AgentLegion.Services
             };
             foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", _scriptPath }.Concat(args))
                 psi.ArgumentList.Add(a);
+            // the script and this service must use the same data folder, also when it was set through Legion:DataDir
+            psi.Environment["AGENTLEGION_HOME"] = _dataDir;
 
             using var cts = new CancellationTokenSource(timeout);
             Process? proc = null;
