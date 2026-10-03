@@ -1,0 +1,148 @@
+@implements IDisposable
+@using AgentLegion.Services
+@inject NavigationManager Nav
+@inject JobStore Store
+@inject LegionService Legion
+
+@if (job is not null)
+{
+    <div class="job-info" aria-label="Current job">
+        <span class="chip" title="Job">
+            <span class="oi oi-layers" aria-hidden="true"></span> @job
+        </span>
+        <span class="chip" title="Git branch">
+            <span class="oi oi-fork" aria-hidden="true"></span> @(Branch ?? "…")
+        </span>
+        <span class="chip" title="Folder (WSL)">
+            <span class="oi oi-folder" aria-hidden="true"></span> @Folder
+        </span>
+        <span class="chip" title="@UsageTooltip">
+            <span class="oi oi-bar-chart" aria-hidden="true"></span>
+            @if (usage is not null)
+            {
+                <span>@Fmt(usage.Billable) tokens</span>
+                <span class="chip-detail">in @Fmt(usage.Input) · out @Fmt(usage.Output) · cache @Fmt(usage.CacheRead)</span>
+            }
+            else
+            {
+                <span>@(usageError is null ? "…" : "n/a")</span>
+            }
+        </span>
+    </div>
+}
+
+@code {
+    private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(20);
+
+    private string? job;
+    private JobUsage? usage;
+    private string? usageError;
+    private bool disposed;
+    private CancellationTokenSource? loopCts;
+
+    private string? Branch => Store.Jobs.FirstOrDefault(j => j.Job == job)?.Branch;
+    private string Folder => $"{Legion.JobsRoot.TrimEnd('/')}/{job}";
+
+    private string UsageTooltip => usage is null
+        ? (usageError ?? "Token usage")
+        : $"Billable (input + output + cache writes): {usage.Billable:N0}\n" +
+          $"Input {usage.Input:N0} · Output {usage.Output:N0}\n" +
+          $"Cache write {usage.CacheCreate:N0} · Cache read {usage.CacheRead:N0}\n" +
+          $"{usage.Messages:N0} messages in {usage.Sessions} session(s)";
+
+    protected override void OnInitialized()
+    {
+        job = JobFromUri(Nav.Uri);
+        Nav.LocationChanged += OnLocationChanged;
+        Store.Changed += OnStoreChanged; // branch comes from the cached job list
+    }
+
+    private void OnStoreChanged()
+    {
+        if (disposed) return;
+        _ = InvokeAsync(() =>
+        {
+            if (!disposed) StateHasChanged();
+        });
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Not during prerender: the lookups shell out to WSL.
+        if (firstRender) RestartLoop();
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        var next = JobFromUri(e.Location);
+        if (next == job) return;
+        job = next;
+        usage = null;
+        usageError = null;
+        RestartLoop();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    // Polls only while a job page is open; leaving the page stops it.
+    private void RestartLoop()
+    {
+        loopCts?.Cancel();
+        loopCts?.Dispose();
+        loopCts = null;
+        if (job is null || disposed) return;
+
+        loopCts = new CancellationTokenSource();
+        _ = LoopAsync(job, loopCts.Token);
+    }
+
+    private async Task LoopAsync(string forJob, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RefreshEvery);
+        try
+        {
+            do
+            {
+                var (u, err) = await Legion.GetUsageAsync(forJob);
+                if (ct.IsCancellationRequested) return;
+                await InvokeAsync(() =>
+                {
+                    if (disposed || job != forJob) return;
+                    usage = u;
+                    usageError = err;
+                    StateHasChanged();
+                });
+
+                await Store.RefreshAsync(); // keeps branch / change counts current (also feeds the sidebar)
+            }
+            while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    // Only /jobs/<name> pages are tied to one job.
+    private static string? JobFromUri(string uri)
+    {
+        var path = new Uri(uri).AbsolutePath.Trim('/');
+        var parts = path.Split('/');
+        return parts.Length == 2 && parts[0].Equals("jobs", StringComparison.OrdinalIgnoreCase)
+            ? Uri.UnescapeDataString(parts[1])
+            : null;
+    }
+
+    private static string Fmt(long n) => n switch
+    {
+        < 1_000 => n.ToString(),
+        < 1_000_000 => $"{n / 1_000d:0.#}k",
+        _ => $"{n / 1_000_000d:0.##}M",
+    };
+
+    public void Dispose()
+    {
+        disposed = true;
+        Nav.LocationChanged -= OnLocationChanged;
+        Store.Changed -= OnStoreChanged;
+        loopCts?.Cancel();
+        loopCts?.Dispose();
+    }
+}

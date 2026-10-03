@@ -170,6 +170,56 @@ git checkout "`$BR"
 "@)
 }
 
+# Sum Claude Code token usage for a job from its transcripts (~/.claude/projects/<encoded cwd>/*.jsonl).
+function Cmd-Usage($cfg) {
+  Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
+  $py = @'
+import glob, json, os, re, sys
+
+job_dir = os.path.realpath(os.path.expanduser(sys.argv[1]))
+base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+proj = os.path.join(base, "projects", re.sub(r"[^a-zA-Z0-9]", "-", job_dir))
+fields = {"input": "input_tokens", "output": "output_tokens",
+          "cacheCreate": "cache_creation_input_tokens", "cacheRead": "cache_read_input_tokens"}
+
+# One assistant message is logged once per content block with the same id: keep the max per field.
+by_id = {}
+files = glob.glob(os.path.join(proj, "*.jsonl"))
+for path in files:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if '"usage"' not in line:
+                continue
+            try:
+                msg = json.loads(line).get("message") or {}
+            except ValueError:
+                continue
+            usage, mid = msg.get("usage"), msg.get("id")
+            if not isinstance(usage, dict) or not mid:
+                continue
+            cur = by_id.setdefault(mid, {k: 0 for k in fields})
+            for k, f in fields.items():
+                cur[k] = max(cur[k], int(usage.get(f) or 0))
+
+out = {k: sum(u[k] for u in by_id.values()) for k in fields}
+out["messages"] = len(by_id)
+out["sessions"] = len(files)
+print(json.dumps(out))
+'@
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($py -replace "`r", '')))
+  $lines = Invoke-Wsl $cfg @"
+command -v python3 >/dev/null || { echo 'python3 is required in WSL for usage stats' >&2; exit 1; }
+echo $b64 | base64 -d > /tmp/legion_usage.py
+python3 /tmp/legion_usage.py $($cfg.jobsRoot)/$Name
+"@
+  $raw = ($lines | Where-Object { $_ } | Select-Object -Last 1)
+  if ($Json) { $raw }
+  else {
+    $u = $raw | ConvertFrom-Json
+    $u | Format-List | Out-String | Write-Host
+  }
+}
+
 function Cmd-Doctor($cfg) {
   $state = @{ fail = 0 }
   function Check($label, $script, $hint) {
@@ -216,6 +266,7 @@ switch ($Command) {
   }
   'run'       { Cmd-Run (Get-Config) }
   'doctor'    { Cmd-Doctor (Get-Config) }
+  'usage'     { Cmd-Usage (Get-Config) }
   'diff'      { Cmd-Diff (Get-Config) }
   'push'      { Cmd-Push (Get-Config) }
   'merge'     { Cmd-Merge (Get-Config) }
@@ -233,6 +284,7 @@ AgentLegion commands:
   diff <job> [-Base main]       commits/changes of the job branch vs base
   push <job>                    push the job branch to origin
   merge <job> [-Base main] [-Push]  --no-ff merge job branch into base (local; -Push pushes base)
+  usage <job> [-Json]           Claude token usage for the job (from ~/.claude transcripts)
   doctor                        check WSL, git, claude, repo access, claude auth
   remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
 '@ | Write-Host

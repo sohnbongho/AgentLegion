@@ -10,12 +10,8 @@
 
 <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
     <h1 class="h3 mb-0 me-2">@Name</h1>
-    @if (Branch is not null)
-    {
-        <code class="me-2">@Branch</code>
-    }
     <span class="badge @(running ? "bg-success" : "bg-secondary")">@(running ? "running" : "stopped")</span>
-    <div class="ms-auto">
+    <div class="ms-auto d-flex gap-2">
         <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
         @if (running)
         {
@@ -55,8 +51,6 @@ else if (!running && started)
     private bool disposed;
     private string? error;
     private TermSize size = new(120, 30);
-
-    private string? Branch => Store.Jobs.FirstOrDefault(j => j.Job == Name)?.Branch;
 
     protected override void OnInitialized()
     {

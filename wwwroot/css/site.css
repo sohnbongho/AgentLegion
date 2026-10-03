@@ -68,10 +68,15 @@ a, .btn-link {
     }
 
 .terminal-host {
-    height: calc(100vh - 11rem);
-    min-height: 300px;
+    height: calc(100vh - 17rem);
+    min-height: 260px;
+    max-height: 640px;
     padding: 0.5rem;
     border-radius: 6px;
     background: #0b1020;
     overflow: hidden;
+}
+
+.terminal-host .xterm-viewport {
+    background-color: #0b1020 !important;
 }

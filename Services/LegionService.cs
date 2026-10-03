@@ -10,6 +10,13 @@ namespace AgentLegion.Services
 
     public record CommandResult(bool Ok, string Output);
 
+    /// <summary>Cumulative Claude token usage for a job, summed from its session transcripts.</summary>
+    public record JobUsage(long Input, long Output, long CacheCreate, long CacheRead, int Messages, int Sessions)
+    {
+        /// <summary>Tokens that were actually sent or generated (cache reads excluded, they inflate the total).</summary>
+        public long Billable => Input + Output + CacheCreate;
+    }
+
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude");
 
     /// <summary>Thin wrapper that runs legion.ps1 and parses its output.</summary>
@@ -108,6 +115,23 @@ namespace AgentLegion.Services
                 proc?.Dispose();
             }
         }
+
+        public async Task<(JobUsage? Usage, string? Error)> GetUsageAsync(string job)
+        {
+            var r = await RunAsync(DefaultTimeout, "usage", job, "-Json");
+            if (!r.Ok) return (null, r.Output);
+            try
+            {
+                return (JsonSerializer.Deserialize<JobUsage>(r.Output, JsonOptions), null);
+            }
+            catch (JsonException ex)
+            {
+                return (null, $"Unexpected output from legion.ps1: {ex.Message}");
+            }
+        }
+
+        /// <summary>Jobs root as configured (e.g. ~/agentjobs), for displaying a job's folder.</summary>
+        public string JobsRoot => LoadConfig()?.JobsRoot ?? "~/agentjobs";
 
         public Task<CommandResult> StartAsync(string job) => RunAsync(DefaultTimeout, "start", job);
 

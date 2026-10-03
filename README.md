@@ -34,6 +34,10 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
   세션은 서버가 소유하므로 다른 메뉴로 이동하거나 탭을 닫아도 계속 실행되고, 다시 열면 화면이 복원된다.
   Stop/Start 버튼으로 종료·재시작하며, 웹 서버를 종료하면 모든 세션이 종료된다.
 
+- **상단바**: job 페이지에서 현재 job, git branch, 폴더, 누적 토큰 사용량을 표시한다(20초마다 갱신).
+  토큰은 WSL의 `~/.claude/projects/<폴더>/*.jsonl` 대화 기록을 합산한 값이며(`legion.ps1 usage <job>`, WSL에 `python3` 필요),
+  표시값은 input + output + cache write이고 cache read는 따로 보여 준다.
+
 > 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
 
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
