@@ -23,6 +23,24 @@
                 </div>
             }
         }
+
+        @if (Store.IsConfigured && Store.Jobs.Count > 0)
+        {
+            <div class="nav-section">Agents</div>
+            @foreach (var job in Store.Jobs)
+            {
+                <div class="nav-item">
+                    <NavLink class="nav-link" href="@($"jobs/{job.Job}")" title="@job.Branch">
+                        <span class="job-dot @(Sessions.IsRunning(job.Job) ? "running" : "idle")" aria-hidden="true"></span>
+                        <span class="nav-label">@job.Job</span>
+                        @if (job.Changes > 0)
+                        {
+                            <span class="job-changes" title="@job.Changes uncommitted changes">@job.Changes</span>
+                        }
+                    </NavLink>
+                </div>
+            }
+        }
     </nav>
 
     <div class="nav-footer">
@@ -30,6 +48,11 @@
         WSL workspace
     </div>
 </div>
+
+@implements IDisposable
+@using AgentLegion.Services
+@inject JobStore Store
+@inject SessionManager Sessions
 
 @code {
     private record NavItem(string Label, string Href, string Icon, NavLinkMatch Match = NavLinkMatch.Prefix);
@@ -40,7 +63,7 @@
         new("Workspace", new[]
         {
             new NavItem("Dashboard", "", "oi-dashboard", NavLinkMatch.All),
-            new NavItem("Jobs", "jobs", "oi-layers"),
+            new NavItem("Jobs", "jobs", "oi-layers", NavLinkMatch.All),
         }),
         new("System", new[]
         {
@@ -49,6 +72,31 @@
     };
 
     private bool collapseNavMenu = true;
+    private bool disposed;
+
+    protected override void OnInitialized()
+    {
+        Store.Changed += OnJobsChanged;
+        Sessions.Changed += OnJobsChanged;
+        // Listing shells out to WSL; don't hold up the first paint for it.
+        if (!Store.Loaded) _ = Store.EnsureLoadedAsync();
+    }
+
+    private void OnJobsChanged()
+    {
+        if (disposed) return;
+        _ = InvokeAsync(() =>
+        {
+            if (!disposed) StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Store.Changed -= OnJobsChanged;
+        Sessions.Changed -= OnJobsChanged;
+    }
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 

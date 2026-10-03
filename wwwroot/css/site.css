@@ -66,3 +66,12 @@ a, .btn-link {
     .blazor-error-boundary::after {
         content: "An error has occurred."
     }
+
+.terminal-host {
+    height: calc(100vh - 11rem);
+    min-height: 300px;
+    padding: 0.5rem;
+    border-radius: 6px;
+    background: #0b1020;
+    overflow: hidden;
+}

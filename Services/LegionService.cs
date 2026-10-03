@@ -10,7 +10,7 @@ namespace AgentLegion.Services
 
     public record CommandResult(bool Ok, string Output);
 
-    public record LegionConfig(string? Distro, string JobsRoot, string Repo);
+    public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude");
 
     /// <summary>Thin wrapper that runs legion.ps1 and parses its output.</summary>
     public class LegionService
@@ -53,7 +53,7 @@ namespace AgentLegion.Services
                 using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
                 var root = doc.RootElement;
                 string? Str(string name) => root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
-                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "");
+                return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude");
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {

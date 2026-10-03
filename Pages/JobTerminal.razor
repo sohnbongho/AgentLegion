@@ -1,0 +1,192 @@
+@page "/jobs/{Name}"
+@using System.Threading.Channels
+@using AgentLegion.Services
+@implements IAsyncDisposable
+@inject SessionManager Sessions
+@inject JobStore Store
+@inject IJSRuntime JS
+
+<PageTitle>@Name - AgentLegion</PageTitle>
+
+<div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
+    <h1 class="h3 mb-0 me-2">@Name</h1>
+    @if (Branch is not null)
+    {
+        <code class="me-2">@Branch</code>
+    }
+    <span class="badge @(running ? "bg-success" : "bg-secondary")">@(running ? "running" : "stopped")</span>
+    <div class="ms-auto">
+        <a class="btn btn-sm btn-outline-secondary" href="jobs">Jobs</a>
+        @if (running)
+        {
+            <button class="btn btn-sm btn-outline-danger" @onclick="StopAsync">Stop</button>
+        }
+        else
+        {
+            <button class="btn btn-sm btn-primary" @onclick="RestartAsync">Start</button>
+        }
+    </div>
+</div>
+
+@if (error is not null)
+{
+    <div class="alert alert-danger" role="alert">@error</div>
+}
+else if (!running && started)
+{
+    <div class="alert alert-secondary py-2" role="status">세션이 종료되었습니다. Start로 다시 시작할 수 있습니다.</div>
+}
+
+<div @ref="termEl" class="terminal-host"></div>
+
+@code {
+    private record TermSize(int Cols, int Rows);
+
+    [Parameter] public string Name { get; set; } = "";
+
+    private ElementReference termEl;
+    private DotNetObjectReference<JobTerminal>? self;
+    private PtySession? session;
+    private Action<byte[]>? listener;
+    private Channel<byte[]>? pump;
+    private readonly string termId = Guid.NewGuid().ToString("N");
+    private bool running;
+    private bool started;
+    private bool disposed;
+    private string? error;
+    private TermSize size = new(120, 30);
+
+    private string? Branch => Store.Jobs.FirstOrDefault(j => j.Job == Name)?.Branch;
+
+    protected override void OnInitialized()
+    {
+        Sessions.Changed += OnSessionsChanged;
+        Store.Changed += OnSessionsChanged;
+        running = Sessions.IsRunning(Name);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        self = DotNetObjectReference.Create(this);
+        try
+        {
+            size = await JS.InvokeAsync<TermSize>("legionTerm.init", termId, termEl, self);
+            await ConnectAsync();
+        }
+        catch (JSDisconnectedException) { }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    // Start the job's session (or re-attach to the running one) and stream its output into xterm.
+    private Task ConnectAsync()
+    {
+        error = null;
+        try
+        {
+            session = Sessions.GetOrStart(Name, size.Cols, size.Rows);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return Task.CompletedTask;
+        }
+
+        started = true;
+        running = session.IsRunning;
+        pump = Channel.CreateUnbounded<byte[]>();
+        _ = PumpAsync(pump.Reader);
+
+        var ch = pump.Writer;
+        listener = chunk => ch.TryWrite(chunk);
+        session.Attach(listener);
+        session.Resize(size.Cols, size.Rows); // makes a full-screen app repaint for the new viewer
+        session.Exited += OnSessionExited;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    // Single consumer keeps chunks in order and merges bursts into fewer interop calls.
+    private async Task PumpAsync(ChannelReader<byte[]> reader)
+    {
+        try
+        {
+            while (await reader.WaitToReadAsync())
+            {
+                using var ms = new MemoryStream();
+                while (ms.Length < 65536 && reader.TryRead(out var chunk)) ms.Write(chunk);
+                await JS.InvokeVoidAsync("legionTerm.write", termId, Convert.ToBase64String(ms.ToArray()));
+            }
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or ObjectDisposedException or TaskCanceledException) { }
+    }
+
+    private void Disconnect()
+    {
+        if (session is not null)
+        {
+            if (listener is not null) session.Detach(listener);
+            session.Exited -= OnSessionExited;
+        }
+        pump?.Writer.TryComplete();
+        session = null;
+        listener = null;
+        pump = null;
+    }
+
+    private async Task StopAsync()
+    {
+        Disconnect();
+        Sessions.Stop(Name);
+        running = false;
+        await Task.CompletedTask;
+    }
+
+    private async Task RestartAsync()
+    {
+        Disconnect();
+        Sessions.Stop(Name);
+        await JS.InvokeVoidAsync("legionTerm.reset", termId);
+        size = await JS.InvokeAsync<TermSize>("legionTerm.size", termId);
+        await ConnectAsync();
+        await JS.InvokeVoidAsync("legionTerm.focus", termId);
+    }
+
+    private void OnSessionExited() => OnSessionsChanged();
+
+    private void OnSessionsChanged()
+    {
+        if (disposed) return;
+        _ = InvokeAsync(() =>
+        {
+            if (disposed) return;
+            running = Sessions.IsRunning(Name);
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public void OnInput(string data) => session?.Write(data);
+
+    [JSInvokable]
+    public void OnResize(int cols, int rows)
+    {
+        size = new TermSize(cols, rows);
+        session?.Resize(cols, rows);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        Sessions.Changed -= OnSessionsChanged;
+        Store.Changed -= OnSessionsChanged;
+        Disconnect(); // detaches the viewer only; the session keeps running
+        try { await JS.InvokeVoidAsync("legionTerm.dispose", termId); }
+        catch (Exception ex) when (ex is JSDisconnectedException or InvalidOperationException) { }
+        self?.Dispose();
+    }
+}

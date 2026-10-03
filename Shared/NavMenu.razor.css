@@ -130,3 +130,36 @@
         overflow-y: auto;
     }
 }
+
+.job-dot {
+    flex: none;
+    width: 0.55rem;
+    height: 0.55rem;
+    margin: 0 0.75rem 0 0.7rem;
+    border-radius: 50%;
+}
+
+.job-dot.running {
+    background: #4ade80;
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
+}
+
+.job-dot.idle {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.job-changes {
+    margin-left: auto;
+    margin-right: 0.6rem;
+    padding: 0 0.4rem;
+    border-radius: 999px;
+    background: rgba(251, 191, 36, 0.25);
+    color: #fbbf24;
+    font-size: 0.7rem;
+}

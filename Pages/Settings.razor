@@ -1,6 +1,7 @@
 @page "/settings"
 @using AgentLegion.Services
 @inject LegionService Legion
+@inject JobStore Store
 
 <PageTitle>Settings - AgentLegion</PageTitle>
 
@@ -82,6 +83,7 @@
         try
         {
             result = await Legion.SaveConfigAsync(distro, jobsRoot, repo);
+            if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally
         {

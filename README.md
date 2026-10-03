@@ -25,6 +25,17 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
 .\legion.ps1 remove job1 [-Force]           # 미커밋/미push 작업이 있으면 -Force 필요
 ```
 
+## 웹 UI (Blazor)
+`dotnet run`으로 실행. 처음에는 **Settings**에서 WSL 배포판, jobs 루트, 기본 repo를 저장한다.
+
+- **Jobs**: job 추가/삭제, Diff, Push, 세션 상태 확인
+- **사이드바 Agents**: job을 추가하면 메뉴가 하나씩 생긴다(초록 점 = 세션 실행 중, 노란 숫자 = 미커밋 변경 수)
+- **job 메뉴(`/jobs/<job>`)**: 해당 job 폴더에서 WSL `claude`가 실행되는 터미널(xterm.js + ConPTY).
+  세션은 서버가 소유하므로 다른 메뉴로 이동하거나 탭을 닫아도 계속 실행되고, 다시 열면 화면이 복원된다.
+  Stop/Start 버튼으로 종료·재시작하며, 웹 서버를 종료하면 모든 세션이 종료된다.
+
+> 보안: 터미널은 WSL 셸 접근과 같다. 서버는 `localhost`에만 바인딩해서 쓰고, 외부에 노출하지 말 것.
+
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
 
 설정은 `legion.json`(gitignore 대상)에 저장된다.

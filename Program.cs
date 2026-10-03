@@ -16,6 +16,8 @@ namespace AgentLegion
             builder.Services.AddServerSideBlazor();
             builder.Services.AddSingleton<WeatherForecastService>();
             builder.Services.AddSingleton<LegionService>();
+            builder.Services.AddSingleton<JobStore>();
+            builder.Services.AddSingleton<SessionManager>();
 
             var app = builder.Build();
 
