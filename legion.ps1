@@ -17,7 +17,8 @@ param(
   [string]$Branch,
   [string]$Distro,
   [string]$Root,
-  [string]$Prompt
+  [string]$Prompt,
+  [int]$TimeoutSec = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,10 +36,10 @@ function Get-Config {
 function Wsl-Args($cfg) { if ($cfg.distro) { @('-d', $cfg.distro) } else { @() } }
 
 # Run a bash script inside WSL. The script is base64-encoded to avoid any quoting issues.
-function Invoke-Wsl($cfg, [string]$script) {
+function Invoke-Wsl($cfg, [string]$script, [switch]$NoThrow) {
   $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script -replace "`r", '')))
   & wsl.exe @(Wsl-Args $cfg) -- bash -lc "echo $b64 | base64 -d | bash -l"
-  if ($LASTEXITCODE -ne 0) { throw "WSL command failed (exit $LASTEXITCODE)" }
+  if ($LASTEXITCODE -ne 0 -and -not $NoThrow) { throw "WSL command failed (exit $LASTEXITCODE)" }
 }
 
 function Get-JobBranch($cfg, $name) {
@@ -100,7 +101,30 @@ function Cmd-Run($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
   if (-not $Prompt) { throw '-Prompt is required' }
   $p = $Prompt -replace "'", "'\''"
-  Invoke-Wsl $cfg "cd $($cfg.jobsRoot)/$Name && $($cfg.claudeCmd) -p '$p'"
+  Invoke-Wsl $cfg "cd $($cfg.jobsRoot)/$Name && timeout $TimeoutSec $($cfg.claudeCmd) -p '$p' < /dev/null" -NoThrow
+  if ($LASTEXITCODE -eq 124) {
+    throw "claude timed out after ${TimeoutSec}s. If this is unexpected, run '.\legion.ps1 doctor' (auth may be expired; run 'claude' in WSL and /login)."
+  }
+  if ($LASTEXITCODE -ne 0) { throw "claude exited with code $LASTEXITCODE" }
+}
+
+function Cmd-Doctor($cfg) {
+  $state = @{ fail = 0 }
+  function Check($label, $script, $hint) {
+    Write-Host -NoNewline ("{0,-28}" -f $label)
+    $out = Invoke-Wsl $cfg $script -NoThrow 2>&1
+    $code = $LASTEXITCODE
+    if ($code -eq 0) { Write-Host 'OK' -ForegroundColor Green }
+    else { Write-Host "FAIL ($code)  $hint" -ForegroundColor Red; $state.fail++ }
+  }
+  Check 'WSL reachable'      'true'                              'distro name wrong or WSL not installed?'
+  Check 'git installed'      'command -v git >/dev/null'         'apt install git'
+  Check 'claude installed'   "command -v $($cfg.claudeCmd) >/dev/null" 'install Claude Code in WSL'
+  Check 'jobs root writable' "mkdir -p $($cfg.jobsRoot) && test -w $($cfg.jobsRoot)" 'check permissions'
+  $repo = $cfg.repo -replace "'", "'\''"
+  Check 'repo reachable'     "git ls-remote '$repo' HEAD >/dev/null 2>&1" 'check URL / SSH key / credentials in WSL'
+  Check 'claude auth (30s)'  "timeout 30 $($cfg.claudeCmd) -p 'Reply with PONG' < /dev/null >/dev/null 2>&1" "run 'claude' in WSL and /login again"
+  if ($state.fail) { throw "$($state.fail) check(s) failed" } else { Write-Host 'All checks passed.' }
 }
 
 function Cmd-Remove($cfg) {
@@ -120,6 +144,7 @@ switch ($Command) {
     foreach ($j in $jobs) { if ($j) { Start-Job-Tab $cfg $j } }
   }
   'run'       { Cmd-Run (Get-Config) }
+  'doctor'    { Cmd-Doctor (Get-Config) }
   'remove'    { Cmd-Remove (Get-Config) }
   default {
     @'
@@ -129,7 +154,8 @@ AgentLegion commands:
   list | status                 show jobs, branches, uncommitted changes
   start <job>                   open Windows Terminal tab running claude in that job
   start-all                     open a tab for every job
-  run <job> -Prompt "<text>"    non-interactive claude -p in that job
+  run <job> -Prompt "<text>" [-TimeoutSec 600]   non-interactive claude -p in that job
+  doctor                        check WSL, git, claude, repo access, claude auth
   remove <job>                  delete job folder
 '@ | Write-Host
   }

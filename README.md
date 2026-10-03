@@ -16,6 +16,8 @@ Windows에서 WSL 위의 여러 Claude Code 에이전트를 관리하는 워크�
 .\legion.ps1 start job1                     # 새 탭에서 claude 실행
 .\legion.ps1 start-all
 .\legion.ps1 run job2 -Prompt "테스트 고치고 커밋해줘"
+.\legion.ps1 run job2 -Prompt "..." -TimeoutSec 300   # 기본 600초, 초과 시 오류
+.\legion.ps1 doctor                         # WSL/git/claude/repo/인증 점검
 .\legion.ps1 remove job1
 ```
 
