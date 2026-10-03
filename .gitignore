@@ -1,2 +1,5 @@
 legion.json
 .vs/
+bin/
+obj/
+*.user
