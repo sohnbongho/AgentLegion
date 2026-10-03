@@ -44,6 +44,44 @@ window.legionTerm = (function () {
         });
     }
 
+    // Small transient notice over the terminal (e.g. when the browser refuses clipboard access).
+    function toast(el, message) {
+        let t = el.querySelector(':scope > .term-toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.className = 'term-toast';
+            el.appendChild(t);
+        }
+        t.textContent = message;
+        t.classList.add('show');
+        clearTimeout(t._timer);
+        t._timer = setTimeout(() => t.classList.remove('show'), 4000);
+    }
+
+    // Right click, as in Windows Terminal: with a selection it copies (and clears the selection),
+    // without one it pastes. Shift + right click keeps the browser's own menu. Reading the clipboard needs the
+    // browser's permission (asked once); if it is refused the keyboard paste (Ctrl+V) still works.
+    function installRightClick(term, el) {
+        const handler = async ev => {
+            if (ev.shiftKey) return;
+            ev.preventDefault();
+            if (term.hasSelection()) {
+                await copyText(term.getSelection(), term);
+                term.clearSelection();
+                return;
+            }
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text) term.paste(text);
+            } catch (e) {
+                toast(el, '클립보드를 읽을 수 없습니다. Ctrl+V로 붙여넣으세요.');
+            }
+            term.focus();
+        };
+        el.addEventListener('contextmenu', handler);
+        return () => el.removeEventListener('contextmenu', handler);
+    }
+
     return {
         init(id, el, ref) {
             this.dispose(id);
@@ -59,13 +97,14 @@ window.legionTerm = (function () {
             term.open(el);
             fit.fit();
             installClipboardKeys(term);
+            const removeRightClick = installRightClick(term, el);
 
             term.onData(d => ref.invokeMethodAsync('OnInput', d));
             term.onResize(s => ref.invokeMethodAsync('OnResize', s.cols, s.rows));
             const ro = new ResizeObserver(() => { try { fit.fit(); } catch (e) { /* hidden */ } });
             ro.observe(el);
 
-            terms.set(id, { term, fit, ro });
+            terms.set(id, { term, fit, ro, removeRightClick });
             term.focus();
             return { cols: term.cols, rows: term.rows };
         },
@@ -89,6 +128,7 @@ window.legionTerm = (function () {
             const t = terms.get(id);
             if (!t) return;
             t.ro.disconnect();
+            t.removeRightClick();
             t.term.dispose();
             terms.delete(id);
         }
