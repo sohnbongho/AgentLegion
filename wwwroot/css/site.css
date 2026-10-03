@@ -84,3 +84,15 @@ a, .btn-link {
 .terminal-host .xterm-viewport {
     scrollbar-color: #3b4261 #0b1020;
 }
+
+.usage-steps li {
+    margin-bottom: 0.5rem;
+}
+
+.usage-list {
+    padding-left: 1.1rem;
+}
+
+.usage-list li {
+    margin-bottom: 0.4rem;
+}
