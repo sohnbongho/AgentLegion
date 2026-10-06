@@ -75,6 +75,33 @@
     <div class="form-text">URL 또는 WSL 절대경로(<code>~</code>는 사용할 수 없음). job마다 따로 지정할 수도 있습니다.</div>
 </div>
 
+<h2 class="h5 mt-4">Job 터미널</h2>
+
+<div class="row g-2 mb-2" style="max-width: 36rem;">
+    <div class="col-8">
+        <label class="form-label" for="termfont">글꼴</label>
+        <input id="termfont" class="form-control" list="termfont-list" @bind="termFontFamily" @bind:event="oninput" placeholder="Consolas (기본)" />
+        <datalist id="termfont-list">
+            @foreach (var f in fontSuggestions)
+            {
+                <option value="@f"></option>
+            }
+        </datalist>
+    </div>
+    <div class="col-4">
+        <label class="form-label" for="termsize">크기 (px)</label>
+        <input id="termsize" type="number" class="form-control" min="@LegionConfig.MinTerminalFontSize" max="@LegionConfig.MaxTerminalFontSize"
+               @bind="termFontSize" @bind:event="oninput" />
+    </div>
+</div>
+<div class="mb-3" style="max-width: 36rem;">
+    <div class="terminal-font-preview" style="@PreviewStyle">claude&gt; 안녕하세요 Hello 0123456789 {}[]()</div>
+    <div class="form-text">
+        PC에 설치된 글꼴 이름을 입력합니다. 없는 글꼴이면 Consolas로 표시됩니다.
+        크기는 @LegionConfig.MinTerminalFontSize~@LegionConfig.MaxTerminalFontSize. 저장 후 job 화면을 다시 열면 적용됩니다.
+    </div>
+</div>
+
 <button class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(jobsRoot))" @onclick="SaveAsync">
     @(saving ? "Saving..." : "Save")
 </button>
@@ -107,6 +134,25 @@
     private string? foundPath;
     private bool foundIsWindows;
     private string? foundMessage;
+    private string? termFontFamily;
+    private int termFontSize = LegionConfig.DefaultTerminalFontSize;
+
+    private static readonly string[] fontSuggestions =
+    {
+        "Consolas", "Cascadia Mono", "Cascadia Code", "D2Coding", "JetBrains Mono", "NanumGothicCoding", "Courier New",
+    };
+
+    private const string DefaultTerminalFonts = "Consolas, \"Cascadia Mono\", \"Courier New\", monospace";
+
+    private string PreviewStyle
+    {
+        get
+        {
+            var family = string.IsNullOrWhiteSpace(termFontFamily) ? DefaultTerminalFonts : $"{termFontFamily.Trim()}, {DefaultTerminalFonts}";
+            var px = Math.Clamp(termFontSize, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize);
+            return $"font-family: {family}; font-size: {px}px;";
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -119,6 +165,8 @@
             repo = cfg.Repo;
             claudeCmd = cfg.ClaudeCmd;
             windowsClaudeCmd = cfg.WindowsClaudeCmd;
+            termFontFamily = cfg.TerminalFontFamily;
+            termFontSize = cfg.TerminalFontSize;
         }
         distros = await Legion.GetDistrosAsync();
     }
@@ -132,6 +180,7 @@
             result = await Legion.SaveConfigAsync(distro, jobsRoot, repo, windowsRoot,
                 string.IsNullOrWhiteSpace(claudeCmd) ? "claude" : claudeCmd,
                 string.IsNullOrWhiteSpace(windowsClaudeCmd) ? "claude" : windowsClaudeCmd);
+            if (result.Ok) result = Legion.SaveTerminalFont(termFontFamily, termFontSize);
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally

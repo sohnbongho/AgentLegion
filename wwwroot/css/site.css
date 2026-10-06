@@ -120,3 +120,13 @@ a, .btn-link {
 .term-toast.show {
     opacity: 1;
 }
+
+.terminal-font-preview {
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: #0b1020;
+    color: #e6e6e6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

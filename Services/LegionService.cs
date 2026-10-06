@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace AgentLegion.Services
@@ -29,10 +30,15 @@ namespace AgentLegion.Services
     }
 
     /// <param name="WindowsJobsRoot">Where Windows PowerShell jobs live; null = the default %USERPROFILE%\agentjobs.</param>
+    /// <param name="TerminalFontFamily">Job terminal font (CSS font-family); null = the built-in monospace list.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
         SessionStateDetection StateDetection = SessionStateDetection.Title,
-        string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true)
+        string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true,
+        string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize)
     {
+        public const int DefaultTerminalFontSize = 16;
+        public const int MinTerminalFontSize = 8;
+        public const int MaxTerminalFontSize = 40;
         public const string DefaultWindowsRoot = @"%USERPROFILE%\agentjobs";
 
         /// <summary>The Windows jobs root with environment variables expanded.</summary>
@@ -144,9 +150,14 @@ namespace AgentLegion.Services
                 var detection = string.Equals(Str("stateDetection"), "activity", StringComparison.OrdinalIgnoreCase)
                     ? SessionStateDetection.Activity
                     : SessionStateDetection.Title;
+                var fontSize = root.TryGetProperty("terminalFontSize", out var fs) && fs.ValueKind == JsonValueKind.Number && fs.TryGetInt32(out var n)
+                    ? Math.Clamp(n, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize)
+                    : LegionConfig.DefaultTerminalFontSize;
+                var fontFamily = Str("terminalFontFamily")?.Trim();
                 return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude",
                     detection, Str("windowsJobsRoot"), Str("windowsClaudeCmd") ?? "claude",
-                    !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False));
+                    !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False),
+                    string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize);
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -165,6 +176,28 @@ namespace AgentLegion.Services
             if (!string.IsNullOrWhiteSpace(claudeCmd)) args.AddRange(new[] { "-ClaudeCmd", claudeCmd.Trim() });
             if (!string.IsNullOrWhiteSpace(windowsClaudeCmd)) args.AddRange(new[] { "-WindowsClaudeCmd", windowsClaudeCmd.Trim() });
             return RunAsync(DefaultTimeout, args.ToArray());
+        }
+
+        /// <summary>
+        /// Saves the job terminal font into legion.json (legion.ps1 does not use it; `init` keeps it).
+        /// A blank family removes the setting so the built-in font list is used.
+        /// </summary>
+        public CommandResult SaveTerminalFont(string? family, int size)
+        {
+            try
+            {
+                var root = File.Exists(ConfigPath) ? JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject : null;
+                root ??= new JsonObject();
+                if (string.IsNullOrWhiteSpace(family)) root.Remove("terminalFontFamily");
+                else root["terminalFontFamily"] = family.Trim();
+                root["terminalFontSize"] = Math.Clamp(size, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize);
+                File.WriteAllText(ConfigPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                return new CommandResult(true, "");
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+            {
+                return new CommandResult(false, $"터미널 글꼴을 저장하지 못했습니다: {ex.Message}");
+            }
         }
 
         /// <param name="windows">true = a native Windows PowerShell job (e.g. Unity), false = a WSL job.</param>

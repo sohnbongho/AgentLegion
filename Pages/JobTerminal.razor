@@ -123,7 +123,13 @@ else if (!running && started)
         self = DotNetObjectReference.Create(this);
         try
         {
-            size = await JS.InvokeAsync<TermSize>("legionTerm.init", termId, termEl, self);
+            var cfg = Legion.LoadConfig();
+            var font = new
+            {
+                fontFamily = cfg?.TerminalFontFamily,
+                fontSize = cfg?.TerminalFontSize ?? LegionConfig.DefaultTerminalFontSize,
+            };
+            size = await JS.InvokeAsync<TermSize>("legionTerm.init", termId, termEl, self, font);
             initialized = true;
             connectedName = Name;
             await ConnectAsync();

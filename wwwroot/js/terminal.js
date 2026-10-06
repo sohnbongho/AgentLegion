@@ -83,12 +83,14 @@ window.legionTerm = (function () {
     }
 
     return {
-        init(id, el, ref) {
+        // font: { fontFamily, fontSize } from Settings; the built-in list stays as the fallback
+        init(id, el, ref, font) {
             this.dispose(id);
+            const defaultFonts = 'Consolas, "Cascadia Mono", "Courier New", monospace';
             const term = new Terminal({
                 cursorBlink: true,
-                fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
-                fontSize: 16,
+                fontFamily: font && font.fontFamily ? `${font.fontFamily}, ${defaultFonts}` : defaultFonts,
+                fontSize: (font && font.fontSize) || 16,
                 scrollback: 5000,
                 theme: { background: '#0b1020' }
             });
