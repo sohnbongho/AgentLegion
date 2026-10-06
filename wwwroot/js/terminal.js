@@ -88,7 +88,7 @@ window.legionTerm = (function () {
             const term = new Terminal({
                 cursorBlink: true,
                 fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
-                fontSize: 14,
+                fontSize: 16,
                 scrollback: 5000,
                 theme: { background: '#0b1020' }
             });
