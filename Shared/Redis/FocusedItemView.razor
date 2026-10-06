@@ -1,0 +1,106 @@
+@using System.Text.Json
+@inject KeyBrowserState State
+@implements IDisposable
+
+@if (State.FocusedItemText is not null)
+{
+    <div class="focused-item mt-3 border rounded">
+        <div class="focused-header px-2 py-1 d-flex align-items-center gap-2 border-bottom bg-light">
+            <strong class="me-2">선택 항목:</strong>
+            <code class="focused-label flex-grow-1" title="@State.FocusedItemLabel">@State.FocusedItemLabel</code>
+            <span class="small text-muted">@State.FocusedItemText.Length.ToString("N0") chars</span>
+            @if (_likelyJson)
+            {
+                <button class="btn btn-sm @(_pretty ? "btn-primary" : "btn-outline-primary")"
+                        @onclick="TogglePretty">@(_pretty ? "Raw" : "Pretty")</button>
+            }
+            <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => State.ClearFocus())">닫기</button>
+        </div>
+        <pre class="focused-body m-0">@DisplayText</pre>
+        @if (_jsonError is not null)
+        {
+            <div class="text-danger small px-2 py-1">JSON 파싱 실패: @_jsonError</div>
+        }
+    </div>
+}
+
+<style>
+    .focused-label {
+        font-family: var(--bs-font-monospace, monospace);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 24rem;
+    }
+    .focused-body {
+        white-space: pre-wrap;
+        word-break: break-word;
+        padding: .75rem;
+        max-height: 40vh;
+        overflow: auto;
+        background: #f8f9fa;
+    }
+</style>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChanged;
+    }
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    private string? _previousText;
+    private bool _likelyJson;
+    private bool _pretty;
+    private string? _prettyCache;
+    private string? _jsonError;
+
+    protected override void OnParametersSet()
+    {
+        var text = State.FocusedItemText;
+        if (!ReferenceEquals(text, _previousText))
+        {
+            _previousText = text;
+            _likelyJson = LooksLikeJson(text);
+            _pretty = false;
+            _prettyCache = null;
+            _jsonError = null;
+        }
+    }
+
+    private string DisplayText => _pretty && _prettyCache is not null
+        ? _prettyCache
+        : State.FocusedItemText ?? "";
+
+    private void TogglePretty()
+    {
+        if (_pretty) { _pretty = false; return; }
+        _jsonError = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(State.FocusedItemText ?? "");
+            _prettyCache = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            _pretty = true;
+        }
+        catch (Exception ex)
+        {
+            _jsonError = ex.Message;
+        }
+    }
+
+    private static bool LooksLikeJson(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s) || s.Length > 1_048_576) return false;
+        var first = -1; var last = -1;
+        for (int i = 0; i < s.Length; i++) if (!char.IsWhiteSpace(s[i])) { first = i; break; }
+        for (int i = s.Length - 1; i >= 0; i--) if (!char.IsWhiteSpace(s[i])) { last = i; break; }
+        if (first < 0 || last < 0) return false;
+        return (s[first] == '{' && s[last] == '}') || (s[first] == '[' && s[last] == ']');
+    }
+}

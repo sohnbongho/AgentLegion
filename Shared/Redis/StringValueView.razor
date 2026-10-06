@@ -1,0 +1,61 @@
+@using System.Text.Json
+
+<div class="d-flex gap-2 mb-2">
+    @if (Payload.IsLikelyJson)
+    {
+        <button class="btn btn-sm @(_pretty ? "btn-primary" : "btn-outline-primary")"
+                @onclick="TogglePretty">
+            @(_pretty ? "Raw" : "Pretty")
+        </button>
+    }
+    <span class="small text-muted align-self-center">@Payload.Value.Length.ToString("N0") chars</span>
+</div>
+
+<pre class="string-value">@DisplayValue</pre>
+
+@if (_jsonError is not null)
+{
+    <div class="text-danger small">JSON 파싱 실패: @_jsonError</div>
+}
+
+<style>
+    .string-value {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #f8f9fa;
+        padding: .75rem;
+        border-radius: .375rem;
+        max-height: 60vh;
+        overflow: auto;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public StringPayload Payload { get; set; } = default!;
+
+    private bool _pretty;
+    private string? _prettyCache;
+    private string? _jsonError;
+
+    private string DisplayValue => _pretty && _prettyCache is not null ? _prettyCache : Payload.Value;
+
+    private void TogglePretty()
+    {
+        if (_pretty)
+        {
+            _pretty = false;
+            return;
+        }
+        _jsonError = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(Payload.Value);
+            _prettyCache = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            _pretty = true;
+        }
+        catch (Exception ex)
+        {
+            _jsonError = ex.Message;
+        }
+    }
+}

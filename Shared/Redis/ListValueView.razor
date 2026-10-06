@@ -1,0 +1,43 @@
+@inject KeyBrowserState State
+
+<div class="table-wrap">
+    <table class="table table-sm table-striped table-hover">
+        <thead class="sticky-top bg-white">
+            <tr>
+                <th style="width: 5rem;">#</th>
+                <th>값</th>
+            </tr>
+        </thead>
+        <tbody>
+            <Virtualize Items="_rows" Context="row" ItemSize="32">
+                <tr role="button" @onclick="@(() => State.FocusItem($"index {row.Index}", row.Value))">
+                    <td class="text-muted">@row.Index</td>
+                    <td class="mono cell-truncate">@row.Value</td>
+                </tr>
+            </Virtualize>
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .table-wrap { max-height: 60vh; overflow: auto; }
+    .mono { font-family: var(--bs-font-monospace, monospace); white-space: pre-wrap; word-break: break-all; }
+    .cell-truncate { max-height: 4.5em; overflow: hidden; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public ListPayload Payload { get; set; } = default!;
+
+    private List<Row> _rows = new();
+
+    private sealed record Row(int Index, string Value);
+
+    protected override void OnParametersSet()
+    {
+        _rows = new List<Row>(Payload.Items.Count);
+        for (int i = 0; i < Payload.Items.Count; i++)
+        {
+            _rows.Add(new Row(i, Payload.Items[i]));
+        }
+    }
+}

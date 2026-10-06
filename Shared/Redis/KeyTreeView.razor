@@ -1,0 +1,101 @@
+@inject KeyBrowserState State
+@inject RedisConnectionService Redis
+@implements IDisposable
+
+<div class="tree-toolbar p-2 border-bottom">
+    <div class="input-group input-group-sm mb-2">
+        <input type="text" class="form-control" placeholder="패턴 예: user:* (glob; * ? [set])"
+               value="@_pattern"
+               @oninput="OnPatternInput"
+               @onkeydown="OnPatternKeyDown" />
+        <button class="btn btn-outline-primary" type="button" @onclick="ApplyPattern" disabled="@State.IsBusy">Apply</button>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="Reload" disabled="@State.IsBusy">
+            @if (State.IsBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            }
+            새로고침
+        </button>
+        @if (!string.IsNullOrEmpty(State.LastError))
+        {
+            <span class="text-danger small" title="@State.LastError">⚠ @TrimError(State.LastError)</span>
+        }
+    </div>
+</div>
+
+<div class="tree-body p-1">
+    @if (!State.IsInitialized && State.IsBusy)
+    {
+        <div class="text-muted small p-2">초기화 중...</div>
+    }
+    else if (State.Roots.Count == 0)
+    {
+        <div class="text-muted small p-2">표시할 데이터베이스가 없습니다.</div>
+    }
+    else
+    {
+        <ul class="tree-list">
+            @foreach (var root in State.Roots)
+            {
+                <KeyTreeNode Node="root" Depth="0" />
+            }
+        </ul>
+    }
+</div>
+
+<style>
+    .tree-list, .tree-list ul {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+    }
+    .tree-list ul {
+        padding-left: 1rem;
+    }
+</style>
+
+@code {
+    private string _pattern = "";
+
+    protected override void OnInitialized()
+    {
+        _pattern = State.MatchPattern;
+        State.Changed += OnStateChanged;
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChanged;
+    }
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnPatternInput(ChangeEventArgs e)
+    {
+        _pattern = e.Value?.ToString() ?? "";
+    }
+
+    private async Task OnPatternKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await ApplyPattern();
+        }
+    }
+
+    private async Task ApplyPattern()
+    {
+        State.MatchPattern = _pattern.Trim();
+        await State.ReloadAllAsync();
+    }
+
+    private async Task Reload()
+    {
+        await State.ReloadAllAsync();
+    }
+
+    private static string TrimError(string? s) =>
+        string.IsNullOrEmpty(s) ? "" : s.Length <= 50 ? s : s[..50] + "...";
+}

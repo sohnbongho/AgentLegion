@@ -1,0 +1,39 @@
+@inject KeyBrowserState State
+
+<div class="stream-wrap">
+    @foreach (var entry in Payload.Entries)
+    {
+        <div class="card mb-2">
+            <div class="card-header py-1 px-2 small">
+                <code>@entry.Id</code>
+            </div>
+            <div class="card-body p-2">
+                <table class="table table-sm mb-0 table-hover">
+                    <tbody>
+                        @foreach (var f in entry.Fields)
+                        {
+                            <tr role="button" @onclick="@(() => State.FocusItem($"{entry.Id} / {f.Key}", f.Value))">
+                                <td class="mono text-muted" style="width: 12rem;">@f.Key</td>
+                                <td class="mono cell-truncate">@f.Value</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    @if (Payload.Entries.Count == 0)
+    {
+        <div class="text-muted">스트림에 항목이 없습니다.</div>
+    }
+</div>
+
+<style>
+    .stream-wrap { max-height: 60vh; overflow: auto; }
+    .mono { font-family: var(--bs-font-monospace, monospace); white-space: pre-wrap; word-break: break-all; }
+    .cell-truncate { max-height: 4.5em; overflow: hidden; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public StreamPayload Payload { get; set; } = default!;
+}

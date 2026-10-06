@@ -1,0 +1,116 @@
+@inject KeyBrowserState State
+@implements IDisposable
+
+@if (State.SelectedDetail is null)
+{
+    @if (State.IsBusy && State.SelectedNodePath is not null)
+    {
+        <div class="text-muted">키 값을 불러오는 중...</div>
+    }
+    else if (!string.IsNullOrEmpty(State.LastError) && State.SelectedNodePath is not null)
+    {
+        <div class="alert alert-danger" role="alert">
+            <strong>키 로딩 실패:</strong> @State.LastError
+        </div>
+    }
+    else
+    {
+        <div class="text-muted">좌측 트리에서 키를 선택하세요.</div>
+    }
+}
+else
+{
+    var d = State.SelectedDetail;
+    <div class="kv-header mb-3">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="badge bg-secondary text-uppercase">@d.Type</span>
+            <code class="kv-key" title="@d.Key">@d.Key</code>
+            <span class="text-muted">db@(d.DbIndex)</span>
+        </div>
+        <div class="d-flex gap-3 mt-2 small text-muted">
+            <span><strong>TTL:</strong> @FormatTtl(d.Ttl)</span>
+            <span><strong>크기:</strong> @d.TotalCount.ToString("N0")</span>
+            @if (d.MemoryBytes is long mem)
+            {
+                <span><strong>메모리:</strong> @FormatBytes(mem)</span>
+            }
+            else
+            {
+                <span><strong>메모리:</strong> —</span>
+            }
+            @if (d.Truncated)
+            {
+                <span class="badge bg-warning text-dark">truncated</span>
+            }
+        </div>
+    </div>
+
+    <div class="kv-body">
+        @switch (d.Payload)
+        {
+            case StringPayload sp:
+                <StringValueView Payload="sp" />
+                break;
+            case ListPayload lp:
+                <ListValueView Payload="lp" />
+                break;
+            case HashPayload hp:
+                <HashValueView Payload="hp" />
+                break;
+            case SetPayload setp:
+                <SetValueView Payload="setp" />
+                break;
+            case SortedSetPayload zp:
+                <SortedSetValueView Payload="zp" />
+                break;
+            case StreamPayload strp:
+                <StreamValueView Payload="strp" />
+                break;
+            default:
+                <div class="text-muted">표시 가능한 값이 없습니다.</div>
+                break;
+        }
+    </div>
+
+    <FocusedItemView />
+}
+
+<style>
+    .kv-key {
+        font-size: 1rem;
+        word-break: break-all;
+    }
+</style>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChanged;
+    }
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    private static string FormatTtl(TimeSpan? ttl)
+    {
+        if (ttl is null) return "no expire";
+        var t = ttl.Value;
+        if (t.TotalSeconds < 1) return "expired";
+        if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s ({(long)t.TotalSeconds:N0}s)";
+        if (t.TotalMinutes >= 1) return $"{t.Minutes}m {t.Seconds}s ({(long)t.TotalSeconds}s)";
+        return $"{(int)t.TotalSeconds}s";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        const long k = 1024;
+        if (bytes < k) return $"{bytes} B";
+        if (bytes < k * k) return $"{bytes / (double)k:N1} KiB";
+        if (bytes < k * k * k) return $"{bytes / (double)(k * k):N1} MiB";
+        return $"{bytes / (double)(k * k * k):N2} GiB";
+    }
+}

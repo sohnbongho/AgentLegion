@@ -1,5 +1,7 @@
 using AgentLegion.Data;
+using System.Text;
 using AgentLegion.Services;
+using AgentLegion.Services.Redis;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -9,6 +11,9 @@ namespace AgentLegion
     {
         public static void Main(string[] args)
         {
+            // Redis values are decoded as EUC-KR
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
             var builder = WebApplication.CreateBuilder(args);
 
             // Add services to the container.
@@ -19,6 +24,10 @@ namespace AgentLegion
             builder.Services.AddSingleton<JobStore>();
             builder.Services.AddSingleton<SessionManager>();
             builder.Services.AddSingleton<WslInfoService>();
+            // per browser circuit: each tab has its own Redis connection
+            builder.Services.AddScoped<RedisConnectionService>();
+            builder.Services.AddScoped<RedisKeyService>();
+            builder.Services.AddScoped<KeyBrowserState>();
 
             var app = builder.Build();
 

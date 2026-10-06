@@ -1,0 +1,33 @@
+@inject KeyBrowserState State
+
+<div class="table-wrap">
+    <table class="table table-sm table-striped table-hover">
+        <thead class="sticky-top bg-white">
+            <tr><th>멤버 (정렬됨)</th></tr>
+        </thead>
+        <tbody>
+            <Virtualize Items="_members" Context="member" ItemSize="32">
+                <tr role="button" @onclick="@(() => State.FocusItem("member", member))">
+                    <td class="mono cell-truncate">@member</td>
+                </tr>
+            </Virtualize>
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .table-wrap { max-height: 60vh; overflow: auto; }
+    .mono { font-family: var(--bs-font-monospace, monospace); white-space: pre-wrap; word-break: break-all; }
+    .cell-truncate { max-height: 4.5em; overflow: hidden; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public SetPayload Payload { get; set; } = default!;
+
+    private List<string> _members = new();
+
+    protected override void OnParametersSet()
+    {
+        _members = Payload.Members.ToList();
+    }
+}

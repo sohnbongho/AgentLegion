@@ -1,0 +1,37 @@
+@inject KeyBrowserState State
+
+<div class="table-wrap">
+    <table class="table table-sm table-striped table-hover">
+        <thead class="sticky-top bg-white">
+            <tr>
+                <th style="width: 8rem;" class="text-end">스코어</th>
+                <th>멤버</th>
+            </tr>
+        </thead>
+        <tbody>
+            <Virtualize Items="_entries" Context="entry" ItemSize="32">
+                <tr role="button" @onclick="@(() => State.FocusItem($"score {entry.Score}", entry.Member))">
+                    <td class="text-end mono">@entry.Score</td>
+                    <td class="mono cell-truncate">@entry.Member</td>
+                </tr>
+            </Virtualize>
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .table-wrap { max-height: 60vh; overflow: auto; }
+    .mono { font-family: var(--bs-font-monospace, monospace); white-space: pre-wrap; word-break: break-all; }
+    .cell-truncate { max-height: 4.5em; overflow: hidden; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public SortedSetPayload Payload { get; set; } = default!;
+
+    private List<SortedSetEntryDto> _entries = new();
+
+    protected override void OnParametersSet()
+    {
+        _entries = Payload.Entries.ToList();
+    }
+}

@@ -38,6 +38,7 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | Dashboard | 사용법 안내 |
 | Jobs | job 추가, 목록(환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove |
 | job 화면 (`/jobs/<job>`) | claude 터미널 + 상단바 정보 + 같은 도구 버튼 |
+| Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
 | Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더 |
 | 사이드바 | Agents 목록(상태 점·라벨·`PS` 태그·변경 수), 하단에 WSL 상태 |
 

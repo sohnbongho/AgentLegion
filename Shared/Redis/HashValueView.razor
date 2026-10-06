@@ -1,0 +1,42 @@
+@inject KeyBrowserState State
+
+<div class="table-wrap">
+    <table class="table table-sm table-striped table-hover">
+        <thead class="sticky-top bg-white">
+            <tr>
+                <th style="width: 12rem;">필드</th>
+                <th>값</th>
+            </tr>
+        </thead>
+        <tbody>
+            <Virtualize Items="_entries" Context="entry" ItemSize="32">
+                <tr role="button" @onclick="@(() => Focus(entry))">
+                    <td class="mono">@entry.Key</td>
+                    <td class="mono cell-truncate">@entry.Value</td>
+                </tr>
+            </Virtualize>
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .table-wrap { max-height: 60vh; overflow: auto; }
+    .mono { font-family: var(--bs-font-monospace, monospace); white-space: pre-wrap; word-break: break-all; }
+    .cell-truncate { max-height: 4.5em; overflow: hidden; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public HashPayload Payload { get; set; } = default!;
+
+    private List<KeyValuePair<string, string>> _entries = new();
+
+    protected override void OnParametersSet()
+    {
+        _entries = Payload.Entries.ToList();
+    }
+
+    private void Focus(KeyValuePair<string, string> entry)
+    {
+        State.FocusItem(entry.Key, entry.Value);
+    }
+}

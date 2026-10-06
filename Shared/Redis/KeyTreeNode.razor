@@ -1,0 +1,102 @@
+@inject KeyBrowserState State
+
+<li>
+    @if (Node.Kind == KeyNodeKind.Leaf)
+    {
+        <div class="@LeafClass" role="button" @onclick="SelectLeaf" style="@RowStyle">
+            <span class="oi oi-key me-1" aria-hidden="true"></span>
+            <span class="key-segment">@Node.Segment</span>
+        </div>
+    }
+    else
+    {
+        <div class="folder-row" role="button" @onclick="Toggle" style="@RowStyle">
+            <span class="expand-btn">@ExpandIcon</span>
+            <span class="@FolderIconClass me-1" aria-hidden="true"></span>
+            <span class="folder-label">@Label</span>
+            @if (Node.Kind == KeyNodeKind.DbRoot && Node.TruncatedAtLimit)
+            {
+                <span class="badge bg-warning text-dark ms-2" title="10,000 키 상한 도달 — 일부만 표시됨">truncated</span>
+            }
+        </div>
+
+        @if (State.IsExpanded(Node.Path) && Node.IsLoaded)
+        {
+            <ul>
+                @foreach (var child in Node.Children)
+                {
+                    <KeyTreeNode Node="child" Depth="@(Depth + 1)" />
+                }
+            </ul>
+        }
+        else if (State.IsExpanded(Node.Path) && !Node.IsLoaded)
+        {
+            <ul>
+                <li class="text-muted small ps-3">로딩 중...</li>
+            </ul>
+        }
+    }
+</li>
+
+<style>
+    .folder-row, .leaf-row {
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 3px;
+        user-select: none;
+        white-space: nowrap;
+    }
+    .folder-row:hover, .leaf-row:hover {
+        background: #f1f3f5;
+    }
+    .leaf-row.active {
+        background: #cfe2ff;
+    }
+    .expand-btn {
+        display: inline-block;
+        width: 1rem;
+        text-align: center;
+        font-weight: bold;
+        color: #555;
+        font-size: .85rem;
+    }
+    .key-segment {
+        font-family: var(--bs-font-monospace, monospace);
+        font-size: .9rem;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public KeyNode Node { get; set; } = default!;
+
+    [Parameter] public int Depth { get; set; }
+
+    private string LeafClass => "leaf-row" + (State.SelectedNodePath == Node.Path ? " active" : "");
+
+    private string RowStyle => $"padding-left: calc({Depth}rem + 4px)";
+
+    private string ExpandIcon => State.IsExpanded(Node.Path) ? "−" : "+";
+
+    private string FolderIconClass => Node.Kind == KeyNodeKind.DbRoot
+        ? "oi oi-hard-drive"
+        : "oi oi-folder";
+
+    private string Label => Node.Kind == KeyNodeKind.DbRoot
+        ? $"{Node.Segment} ({Node.DbSize:N0})"
+        : Node.Segment;
+
+    private async Task Toggle()
+    {
+        var wasExpanded = State.IsExpanded(Node.Path);
+        State.ToggleExpand(Node.Path);
+        if (!wasExpanded && Node.Kind == KeyNodeKind.DbRoot && !Node.IsLoaded)
+        {
+            await State.EnsureDbLoadedAsync(Node.DbIndex);
+        }
+    }
+
+    private async Task SelectLeaf()
+    {
+        await State.SelectAsync(Node);
+    }
+}

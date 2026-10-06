@@ -1,0 +1,160 @@
+@page "/redis"
+@using System.ComponentModel.DataAnnotations
+@inject RedisConnectionService Redis
+@inject KeyBrowserState State
+@implements IDisposable
+
+<PageTitle>Redis - AgentLegion</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <h1 class="me-auto mb-0">Redis</h1>
+    @if (Redis.IsConnected)
+    {
+        <span class="badge bg-success me-2">Connected</span>
+        <code class="me-2">@Redis.Endpoint</code>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="HandleDisconnect" disabled="@connecting">Disconnect</button>
+    }
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <EditForm Model="@model" OnValidSubmit="HandleConnect">
+            <DataAnnotationsValidator />
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small mb-1" for="redisHost">Host</label>
+                    <InputText id="redisHost" class="form-control" @bind-Value="model.Host" disabled="@connecting" />
+                    <ValidationMessage For="@(() => model.Host)" />
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small mb-1" for="redisPort">Port</label>
+                    <InputNumber id="redisPort" class="form-control" @bind-Value="model.Port" disabled="@connecting" />
+                    <ValidationMessage For="@(() => model.Port)" />
+                </div>
+                <div class="col-6 col-md-1">
+                    <label class="form-label small mb-1" for="redisDb">DB</label>
+                    <InputNumber id="redisDb" class="form-control" @bind-Value="model.Database" disabled="@connecting" />
+                    <ValidationMessage For="@(() => model.Database)" />
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-1" for="redisPassword">Password (optional)</label>
+                    <InputText id="redisPassword" type="password" autocomplete="new-password" class="form-control"
+                               @bind-Value="model.Password" disabled="@connecting" />
+                </div>
+                <div class="col-12 col-md-2">
+                    <button type="submit" class="btn btn-primary w-100" disabled="@connecting">
+                        @if (connecting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            <text>Connecting...</text>
+                        }
+                        else
+                        {
+                            @(Redis.IsConnected ? "Reconnect" : "Connect")
+                        }
+                    </button>
+                </div>
+            </div>
+        </EditForm>
+
+        @if (!Redis.IsConnected && !string.IsNullOrEmpty(Redis.LastError))
+        {
+            <div class="alert alert-danger mt-3 mb-0" role="alert">
+                <strong>Connection failed:</strong> @Redis.LastError
+            </div>
+        }
+    </div>
+</div>
+
+@if (Redis.IsConnected)
+{
+    <div class="browser-layout">
+        <div class="browser-tree">
+            <KeyTreeView />
+        </div>
+        <div class="browser-value">
+            <KeyValuePanel />
+        </div>
+    </div>
+}
+else
+{
+    <p class="text-muted">Redis에 연결하면 여기에서 키를 탐색하고 값을 확인할 수 있습니다.</p>
+}
+
+@code {
+    private readonly ConnectFormModel model = new();
+    private bool connecting;
+    private bool disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        Redis.StateChanged += OnRedisChanged;
+        if (Redis.IsConnected && !State.IsInitialized) await State.InitializeAsync();
+    }
+
+    private void OnStateChanged()
+    {
+        if (!disposed) _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnRedisChanged()
+    {
+        if (disposed) return;
+        _ = InvokeAsync(async () =>
+        {
+            if (Redis.IsConnected && !State.IsInitialized) await State.InitializeAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task HandleConnect()
+    {
+        connecting = true;
+        try
+        {
+            // a new connection (other host or db) starts with a fresh key tree
+            State.Clear();
+            await Redis.ConnectAsync(model.Host, model.Port, model.Password, model.Database);
+        }
+        finally
+        {
+            connecting = false;
+        }
+    }
+
+    private async Task HandleDisconnect()
+    {
+        connecting = true;
+        try
+        {
+            await Redis.DisconnectAsync();
+        }
+        finally
+        {
+            connecting = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        State.Changed -= OnStateChanged;
+        Redis.StateChanged -= OnRedisChanged;
+    }
+
+    private sealed class ConnectFormModel
+    {
+        [Required]
+        public string Host { get; set; } = "localhost";
+
+        [Range(1, 65535)]
+        public int Port { get; set; } = 6379;
+
+        public string? Password { get; set; }
+
+        [Range(0, 15)]
+        public int Database { get; set; }
+    }
+}
