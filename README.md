@@ -97,9 +97,9 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `distro` | (기본 배포판) | WSL 배포판 이름 |
 | `jobsRoot` | `~/agentjobs` | WSL job 폴더 |
 | `repo` | — | 기본 repo (URL 또는 절대경로, `~` 불가) |
-| `claudeCmd` | `claude` | WSL에서 실행할 명령 (끝에 ` --resume <id>`가 붙을 수 있음) |
+| `claudeCmd` | `claude` | WSL에서 실행할 명령 또는 절대 경로 (끝에 ` --resume <id>`가 붙을 수 있음). Settings에서 지정 가능 |
 | `windowsJobsRoot` | `%USERPROFILE%\agentjobs` | Windows job 폴더 |
-| `windowsClaudeCmd` | `claude` | Windows에서 실행할 명령 |
+| `windowsClaudeCmd` | `claude` | Windows에서 실행할 명령 또는 절대 경로. Settings에서 지정 가능 |
 | `stateDetection` | `title` | `activity`로 바꾸면 "출력이 계속 나오면 진행 중"으로 판정(Claude가 아닌 프로그램용) |
 | `resumeLastSession` | `true` | `false`면 항상 새 대화로 시작 |
 | `codeCmd` | `code` | 에디터 명령 (`cursor`, `code-insiders` …) |

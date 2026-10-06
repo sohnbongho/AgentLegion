@@ -33,12 +33,40 @@
 </div>
 
 <div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="claudecmd">Claude 명령 (WSL)</label>
+    <div class="input-group">
+        <input id="claudecmd" class="form-control" @bind="claudeCmd" placeholder="claude" />
+        <button class="btn btn-outline-secondary" disabled="@finding" @onclick="FindClaudeAsync">@(finding ? "찾는 중..." : "WSL에서 찾기")</button>
+    </div>
+    <div class="form-text">
+        WSL job에서 실행할 명령. 이름 대신 절대 경로(예: <code>/home/me/.local/bin/claude</code>)를 넣을 수 있습니다.
+        인자를 덧붙여도 됩니다(예: <code>claude --model opus</code>).
+    </div>
+    @if (foundMessage is not null)
+    {
+        <div class="alert @(foundIsWindows || foundPath is null ? "alert-warning" : "alert-secondary") py-2 mt-2 mb-0 small" role="alert">
+            @foundMessage
+            @if (foundPath is not null && !foundIsWindows && foundPath != claudeCmd?.Trim())
+            {
+                <button class="btn btn-link btn-sm p-0 ms-2 align-baseline" @onclick="() => claudeCmd = foundPath">이 경로 사용</button>
+            }
+        </div>
+    }
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
     <label class="form-label" for="winroot">Jobs root (Windows PowerShell)</label>
     <input id="winroot" class="form-control" @bind="windowsRoot" placeholder="@LegionConfig.DefaultWindowsRoot" />
     <div class="form-text">
         Windows PowerShell job(예: Unity 작업)이 <code>&lt;root&gt;\&lt;job&gt;</code>에 clone됩니다. 비워두면 <code>@LegionConfig.DefaultWindowsRoot</code>.
         Windows에 <code>git</code>과 <code>claude</code>가 설치되어 있어야 합니다.
     </div>
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="winclaudecmd">Claude 명령 (Windows PowerShell)</label>
+    <input id="winclaudecmd" class="form-control" @bind="windowsClaudeCmd" placeholder="claude" />
+    <div class="form-text">Windows PowerShell job에서 실행할 명령. 절대 경로(예: <code>C:\Users\me\AppData\Roaming\npm\claude.cmd</code>)도 됩니다.</div>
 </div>
 
 <div class="mb-3" style="max-width: 36rem;">
@@ -70,9 +98,15 @@
     private string jobsRoot = "~/agentjobs";
     private string windowsRoot = "";
     private string repo = "";
+    private string? claudeCmd = "claude";
+    private string? windowsClaudeCmd = "claude";
     private IReadOnlyList<string> distros = Array.Empty<string>();
     private bool saving;
     private CommandResult? result;
+    private bool finding;
+    private string? foundPath;
+    private bool foundIsWindows;
+    private string? foundMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -83,6 +117,8 @@
             jobsRoot = cfg.JobsRoot;
             windowsRoot = cfg.WindowsJobsRoot ?? "";
             repo = cfg.Repo;
+            claudeCmd = cfg.ClaudeCmd;
+            windowsClaudeCmd = cfg.WindowsClaudeCmd;
         }
         distros = await Legion.GetDistrosAsync();
     }
@@ -93,12 +129,37 @@
         result = null;
         try
         {
-            result = await Legion.SaveConfigAsync(distro, jobsRoot, repo, windowsRoot);
+            result = await Legion.SaveConfigAsync(distro, jobsRoot, repo, windowsRoot,
+                string.IsNullOrWhiteSpace(claudeCmd) ? "claude" : claudeCmd,
+                string.IsNullOrWhiteSpace(windowsClaudeCmd) ? "claude" : windowsClaudeCmd);
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally
         {
             saving = false;
+        }
+    }
+
+    /// <summary>Shows which program the WSL login shell would actually run for the command.</summary>
+    private async Task FindClaudeAsync()
+    {
+        finding = true;
+        foundMessage = null;
+        try
+        {
+            var cmd = string.IsNullOrWhiteSpace(claudeCmd) ? "claude" : claudeCmd;
+            foundPath = await Legion.FindWslProgramAsync(distro, cmd);
+            // WSL appends the Windows PATH, so without a Linux install `claude` resolves to the Windows one under /mnt/
+            foundIsWindows = foundPath?.StartsWith("/mnt/") == true;
+            foundMessage = foundPath is null
+                ? "WSL에서 찾지 못했습니다. WSL 안에 Claude Code를 설치하세요: curl -fsSL https://claude.ai/install.sh | bash"
+                : foundIsWindows
+                    ? $"{foundPath} → Windows용 claude입니다. 이대로면 PowerShell 환경에서 실행됩니다. WSL 안에 Claude Code를 설치한 뒤 그 경로를 지정하세요."
+                    : $"실행 파일: {foundPath}";
+        }
+        finally
+        {
+            finding = false;
         }
     }
 }

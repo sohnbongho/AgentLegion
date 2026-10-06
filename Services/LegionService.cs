@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AgentLegion.Services
 {
@@ -153,11 +154,16 @@ namespace AgentLegion.Services
             }
         }
 
-        public Task<CommandResult> SaveConfigAsync(string? distro, string jobsRoot, string repo, string? windowsRoot = null)
+        /// <param name="claudeCmd">Command (or absolute path) that starts claude in WSL; blank keeps the saved one.</param>
+        /// <param name="windowsClaudeCmd">The same for Windows PowerShell jobs.</param>
+        public Task<CommandResult> SaveConfigAsync(string? distro, string jobsRoot, string repo, string? windowsRoot = null,
+            string? claudeCmd = null, string? windowsClaudeCmd = null)
         {
             var args = new List<string> { "init", "-Repo", repo.Trim(), "-Root", jobsRoot.Trim() };
             if (!string.IsNullOrWhiteSpace(distro)) args.AddRange(new[] { "-Distro", distro.Trim() });
             if (!string.IsNullOrWhiteSpace(windowsRoot)) args.AddRange(new[] { "-WindowsRoot", windowsRoot.Trim() });
+            if (!string.IsNullOrWhiteSpace(claudeCmd)) args.AddRange(new[] { "-ClaudeCmd", claudeCmd.Trim() });
+            if (!string.IsNullOrWhiteSpace(windowsClaudeCmd)) args.AddRange(new[] { "-WindowsClaudeCmd", windowsClaudeCmd.Trim() });
             return RunAsync(DefaultTimeout, args.ToArray());
         }
 
@@ -197,6 +203,47 @@ namespace AgentLegion.Services
             {
                 try { proc?.Kill(); } catch { /* already exited */ }
                 return Array.Empty<string>();
+            }
+            finally
+            {
+                proc?.Dispose();
+            }
+        }
+
+        private static readonly Regex WslProgram = new("^[A-Za-z0-9_./~+-]+$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Where the WSL login shell finds the program that starts <paramref name="claudeCmd"/> (`command -v`),
+        /// or null if it is not found. A /mnt/... result is the Windows claude reached through WSL's Windows PATH.
+        /// </summary>
+        public async Task<string?> FindWslProgramAsync(string? distro, string claudeCmd)
+        {
+            var program = claudeCmd.Trim().Split(' ', 2)[0];
+            if (!WslProgram.IsMatch(program)) return null;
+            var psi = new ProcessStartInfo("wsl.exe")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+            };
+            if (!string.IsNullOrWhiteSpace(distro)) { psi.ArgumentList.Add("-d"); psi.ArgumentList.Add(distro.Trim()); }
+            foreach (var a in new[] { "--", "bash", "-lc", $"command -v {program}" }) psi.ArgumentList.Add(a);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            Process? proc = null;
+            try
+            {
+                proc = Process.Start(psi)!;
+                var text = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+                await proc.WaitForExitAsync(cts.Token);
+                var path = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+                return proc.ExitCode == 0 && !string.IsNullOrEmpty(path) ? path : null;
+            }
+            catch (Exception)
+            {
+                try { proc?.Kill(); } catch { /* already exited */ }
+                return null;
             }
             finally
             {

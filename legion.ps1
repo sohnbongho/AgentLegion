@@ -19,6 +19,8 @@ param(
   [string]$Distro,
   [string]$Root,
   [string]$WindowsRoot,
+  [string]$ClaudeCmd,
+  [string]$WindowsClaudeCmd,
   [ValidateSet('', 'wsl', 'windows')][string]$Target = '',
   [string]$NewName,
   [string]$NewPath,
@@ -205,15 +207,20 @@ function Cmd-Init {
   Assert-Safe $root '^[~/A-Za-z0-9_.-]+$' 'root'
   if ($Distro) { Assert-Safe $Distro '^[A-Za-z0-9_.-]+$' 'distro' }
   if ($WindowsRoot) { Assert-Safe $WindowsRoot '^[A-Za-z0-9_%:\\/ .()-]+$' 'windows root' }
+  # the commands end up inside `bash -lc "..."` / `powershell -Command "..."`: no quotes or shell metacharacters
+  if ($ClaudeCmd) { Assert-Safe $ClaudeCmd '^[A-Za-z0-9_./~=:@+ -]+$' 'claude command' }
+  if ($WindowsClaudeCmd) { Assert-Safe $WindowsClaudeCmd '^[A-Za-z0-9_%:\\/ .()=@+-]+$' 'windows claude command' }
 
   $old = $null
   if (Test-Path $ConfigPath) { $old = Get-Content $ConfigPath -Raw | ConvertFrom-Json }
   $cfg = [ordered]@{ distro = $Distro; jobsRoot = $root; repo = $Repo }
   # keep hand-edited / previously saved settings when re-running init
-  $cfg['claudeCmd'] = if ($old) { Get-Opt $old 'claudeCmd' 'claude' } else { 'claude' }
+  $cfg['claudeCmd'] = if ($ClaudeCmd) { $ClaudeCmd.Trim() } elseif ($old) { Get-Opt $old 'claudeCmd' 'claude' } else { 'claude' }
   if ($WindowsRoot) { $cfg['windowsJobsRoot'] = $WindowsRoot }
   elseif ($old -and $old.PSObject.Properties['windowsJobsRoot']) { $cfg['windowsJobsRoot'] = $old.windowsJobsRoot }
-  foreach ($k in 'windowsClaudeCmd', 'stateDetection', 'resumeLastSession', 'codeCmd') {
+  if ($WindowsClaudeCmd) { $cfg['windowsClaudeCmd'] = $WindowsClaudeCmd.Trim() }
+  elseif ($old -and $old.PSObject.Properties['windowsClaudeCmd']) { $cfg['windowsClaudeCmd'] = $old.windowsClaudeCmd }
+  foreach ($k in 'stateDetection', 'resumeLastSession', 'codeCmd') {
     if ($old -and $old.PSObject.Properties[$k]) { $cfg[$k] = $old.$k }
   }
   $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8
@@ -978,6 +985,7 @@ switch ($Command) {
     @'
 AgentLegion commands:
   init -Repo <url> [-Distro <name>] [-Root ~/agentjobs] [-WindowsRoot <dir>]   write legion.json
+       [-ClaudeCmd <cmd>] [-WindowsClaudeCmd <cmd>]   claude command/path for WSL / Windows jobs
   add <job> [-Branch <name>] [-Repo <url>] [-Target wsl|windows]
                                 clone the repo to <root>/<job> and check out agent/<job>
                                 (-Target windows = a native Windows PowerShell job, default root %USERPROFILE%\agentjobs)
