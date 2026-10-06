@@ -13,9 +13,16 @@
 <div class="d-flex align-items-center mb-2 gap-2 flex-wrap">
     <h1 class="h3 mb-0 me-2">@Name</h1>
     <span class="badge @StateBadge(Sessions.GetState(Name))">@Sessions.GetState(Name).Label()</span>
-    @if (Store.Jobs.FirstOrDefault(j => j.Job == Name) is { IsWindows: true })
+    @if (Store.Jobs.FirstOrDefault(j => j.Job == Name) is { } envJob)
     {
-        <span class="badge bg-info text-dark" title="claude runs in Windows PowerShell">PowerShell</span>
+        @if (envJob.IsWindows)
+        {
+            <span class="badge bg-info text-dark" title="claude runs in Windows PowerShell">PowerShell</span>
+        }
+        else
+        {
+            <span class="badge bg-light text-dark border" title="claude runs in WSL">WSL</span>
+        }
     }
     @if (Sessions.ResumedId(Name) is { } rid)
     {

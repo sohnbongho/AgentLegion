@@ -40,12 +40,12 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | job 화면 (`/jobs/<job>`) | claude 터미널 + 상단바 정보 + 같은 도구 버튼 |
 | Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
 | Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기 |
-| 사이드바 | Agents 목록(상태 점·라벨·`PS` 태그·변경 수), 하단에 WSL 상태 |
+| 사이드바 | Agents 목록(상태 점·라벨·`PS`·`WSL` 태그·변경 수), 하단에 WSL 상태 |
 
 ### job 환경: WSL / Windows PowerShell
 - **WSL job**: `<jobs 폴더>/<이름>`에 clone, WSL 안에서 `claude` 실행.
 - **Windows job**: `<Windows jobs 폴더>\<이름>`에 clone(긴 경로 허용), Windows에서 `powershell.exe` → `claude` 실행.
-  사이드바에 `PS` 태그, 목록에 `PowerShell` 배지가 붙습니다. 새 폴더에서 처음 실행하면 claude의 "폴더를 신뢰하시겠습니까?"가 터미널에 나타나므로 직접 답합니다.
+  사이드바에 `PS` 태그, 목록에 `PowerShell` 배지가 붙습니다(WSL job은 `WSL`). 새 폴더에서 처음 실행하면 claude의 "폴더를 신뢰하시겠습니까?"가 터미널에 나타나므로 직접 답합니다.
 - **기존 폴더 사용**: Add job에서 Path를 지정하면 clone하지 않고 그 폴더에서 `git pull --ff-only`만 한 뒤 job으로 등록합니다. Branch를 비워두면 현재 브랜치를 유지합니다. jobs 폴더 밖의 폴더는 Remove해도 지워지지 않고 목록에서만 빠집니다.
 - job 이름은 두 환경 전체에서 유일해야 합니다.
 

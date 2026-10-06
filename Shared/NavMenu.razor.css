@@ -233,3 +233,8 @@
     font-weight: 600;
     letter-spacing: 0.03em;
 }
+
+.job-env.wsl {
+    background: rgba(134, 239, 172, 0.18);
+    color: #86efac;
+}
