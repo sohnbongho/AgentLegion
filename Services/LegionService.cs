@@ -168,11 +168,13 @@ namespace AgentLegion.Services
         }
 
         /// <param name="windows">true = a native Windows PowerShell job (e.g. Unity), false = a WSL job.</param>
-        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false)
+        /// <param name="path">An existing clone to use: nothing is cloned, it is only pulled. Blank = clone into the jobs root.</param>
+        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false, string? path = null)
         {
             var args = new List<string> { "add", job.Trim() };
             if (!string.IsNullOrWhiteSpace(branch)) args.AddRange(new[] { "-Branch", branch.Trim() });
-            if (!string.IsNullOrWhiteSpace(repo)) args.AddRange(new[] { "-Repo", repo.Trim() });
+            if (!string.IsNullOrWhiteSpace(path)) args.AddRange(new[] { "-Path", path.Trim() });
+            else if (!string.IsNullOrWhiteSpace(repo)) args.AddRange(new[] { "-Repo", repo.Trim() });
             if (windows) args.AddRange(new[] { "-Target", "windows" });
             return RunAsync(NetworkTimeout, args.ToArray());
         }
@@ -330,7 +332,7 @@ namespace AgentLegion.Services
 
         public Task<CommandResult> PushAsync(string job) => RunAsync(NetworkTimeout, "push", job);
 
-        /// <summary>Removes a job. Never forces: legion.ps1 refuses if work would be lost.</summary>
+        /// <summary>Removes a job without checking for uncommitted or unpushed work (the UI asks for confirmation first).</summary>
         public Task<CommandResult> RemoveAsync(string job) => RunAsync(DefaultTimeout, "remove", job);
 
         private async Task<CommandResult> RunAsync(TimeSpan timeout, params string[] args)

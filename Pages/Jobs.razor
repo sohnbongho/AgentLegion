@@ -40,11 +40,17 @@ else
                 </div>
                 <div class="col-12 col-md-2">
                     <label class="form-label small mb-1" for="newBranch">Branch (optional)</label>
-                    <input id="newBranch" class="form-control" @bind="newBranch" placeholder="@(string.IsNullOrWhiteSpace(newName) ? "agent/<name>" : $"agent/{newName.Trim()}")" />
+                    <input id="newBranch" class="form-control" @bind="newBranch" placeholder="@(UsePath ? "현재 브랜치 유지" : string.IsNullOrWhiteSpace(newName) ? "agent/<name>" : $"agent/{newName.Trim()}")" />
                 </div>
-                <div class="col-12 col-md-4">
+                <div class="col-12 col-md-3">
                     <label class="form-label small mb-1" for="newRepo">Repo (optional)</label>
-                    <input id="newRepo" class="form-control" @bind="newRepo" placeholder="기본 repo 사용" />
+                    <input id="newRepo" class="form-control" @bind="newRepo" disabled="@UsePath" placeholder="@(UsePath ? "기존 폴더의 repo 사용" : "기본 repo 사용")" />
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-1" for="newPath">Path (optional)</label>
+                    <input id="newPath" class="form-control" @bind="newPath" @bind:event="oninput"
+                           title="이미 clone된 폴더를 지정하면 새로 받지 않고 그 폴더에서 git pull만 합니다."
+                           placeholder="@(newEnv == "windows" ? @"D:\work\repo" : "/home/me/work/repo")" />
                 </div>
                 <div class="col-12 col-md-2">
                     <button class="btn btn-success w-100" disabled="@(busyJob is not null || string.IsNullOrWhiteSpace(newName))" @onclick="AddJobAsync">
@@ -217,6 +223,8 @@ else
     private string newEnv = "wsl";
     private string? newBranch;
     private string? newRepo;
+    private string? newPath;
+    private bool UsePath => !string.IsNullOrWhiteSpace(newPath);
 
     protected override async Task OnInitializedAsync()
     {
@@ -267,11 +275,11 @@ else
     private async Task AddJobAsync()
     {
         var name = newName.Trim();
-        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows"));
+        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath));
         if (result is { Ok: true })
         {
             newName = "";
-            newBranch = newRepo = null;
+            newBranch = newRepo = newPath = null;
             await RefreshAsync();
         }
     }

@@ -45,6 +45,7 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 - **WSL job**: `<jobs 폴더>/<이름>`에 clone, WSL 안에서 `claude` 실행.
 - **Windows job**: `<Windows jobs 폴더>\<이름>`에 clone(긴 경로 허용), Windows에서 `powershell.exe` → `claude` 실행.
   사이드바에 `PS` 태그, 목록에 `PowerShell` 배지가 붙습니다. 새 폴더에서 처음 실행하면 claude의 "폴더를 신뢰하시겠습니까?"가 터미널에 나타나므로 직접 답합니다.
+- **기존 폴더 사용**: Add job에서 Path를 지정하면 clone하지 않고 그 폴더에서 `git pull --ff-only`만 한 뒤 job으로 등록합니다. Branch를 비워두면 현재 브랜치를 유지합니다. jobs 폴더 밖의 폴더는 Remove해도 지워지지 않고 목록에서만 빠집니다.
 - job 이름은 두 환경 전체에서 유일해야 합니다.
 
 ### 세션
@@ -70,7 +71,7 @@ WSL 칩과 사이드바 하단에 마우스를 올리면 WSL 패키지 버전·O
   - *Repo* — origin URL을 바꿉니다.
   - *작업 경로* — 폴더를 새 경로로 **이동**합니다(다른 드라이브면 복사 후 삭제). 대화 기록도 함께 옮겨 resume과 토큰 집계가 유지됩니다. 대상이 비어 있지 않으면 거부합니다.
   - 이름·브랜치·경로는 **세션을 먼저 Stop**해야 바꿀 수 있습니다(Repo는 실행 중에도 가능).
-- **Diff / Push / Remove**: 변경 확인, job 브랜치 push, 삭제. 삭제는 미커밋/미push 작업이 있으면 거부하며, 루트 밖으로 옮긴 job은 폴더를 지우지 않고 목록에서만 뺍니다.
+- **Diff / Push / Remove**: 변경 확인, job 브랜치 push, 삭제. 삭제는 git 상태(미커밋/미push)를 검사하지 않고 바로 지우며, 루트 밖으로 옮긴 job은 폴더를 지우지 않고 목록에서만 뺍니다.
   병합은 CLI의 `merge`를 씁니다.
 
 ### 터미널 복사/붙여넣기
@@ -109,6 +110,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 ```powershell
 .\legion.ps1 init -Repo git@github.com:me/proj.git -Distro Ubuntu [-Root ~/agentjobs] [-WindowsRoot D:\jobs]
 .\legion.ps1 add job1 [-Branch feature/x] [-Repo <url>] [-Target windows]   # 기본 브랜치 agent/<job>
+.\legion.ps1 add job2 -Path D:\work\repo [-Branch b] [-Target windows]   # 기존 clone 사용: clone 없이 git pull만
 .\legion.ps1 status [-Json]                  # 모든 job: 환경, 브랜치, 미커밋 변경 수, repo, 폴더
 .\legion.ps1 edit job1 [-NewName n] [-Branch b] [-Repo url] [-NewPath dir]
 .\legion.ps1 start job1 | start-all          # Windows Terminal 새 탭에서 claude 실행
@@ -120,7 +122,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 .\legion.ps1 last-session job1 [-Json]       # 마지막 Claude 대화 ID
 .\legion.ps1 code job1 | shell job1          # 에디터 / 일반 터미널 열기
 .\legion.ps1 doctor [-Target windows]        # WSL·Windows, git, claude, repo, 인증 점검
-.\legion.ps1 remove job1 [-Force]            # 삭제 (미커밋/미push 작업이 있으면 -Force 필요)
+.\legion.ps1 remove job1                     # 삭제 (git 상태 검사 없이 바로 삭제)
 ```
 실행 정책 오류 시: `powershell -ExecutionPolicy Bypass -File .\legion.ps1 ...`
 

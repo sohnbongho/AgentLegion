@@ -24,6 +24,7 @@ param(
   [ValidateSet('', 'wsl', 'windows')][string]$Target = '',
   [string]$NewName,
   [string]$NewPath,
+  [string]$Path,
   [string]$Prompt,
   [int]$TimeoutSec = 600,
   [string]$Base,
@@ -237,6 +238,7 @@ function Cmd-Add($cfg) {
   # names are unique across both environments and across jobs renamed/moved by `edit`
   if ((Get-Registry).ContainsKey($Name)) { throw "a job named '$Name' already exists; job names are shared across environments" }
 
+  if ($Path) { Add-Existing $cfg; return }
   if ($Target -eq 'windows') { Win-Add $cfg $br $repoUrl; return }
 
   if (Test-WinJob $cfg $Name) { throw "a Windows job named '$Name' already exists; job names are shared across environments" }
@@ -277,6 +279,63 @@ function Win-Add($cfg, $br, $repoUrl) {
   if ($hasBranch) { Git-Win $dir @('checkout', $br) | Out-Null }
   else { Git-Win $dir @('checkout', '-b', $br) | Out-Null }
   Write-Host "$Name -> $(Git-Win $dir @('rev-parse', '--abbrev-ref', 'HEAD'))"
+}
+
+# A job for a repository that is already checked out somewhere: no clone, just `git pull` there and remember
+# the folder in jobs.json. The branch is switched only when -Branch is given.
+function Add-Existing($cfg) {
+  if ($Path -match '\.\.') { throw "the folder must not contain '..'" }
+  if ($Branch) { Assert-Safe $Branch '^[A-Za-z0-9._/-]+$' 'branch' }
+  $isWin = $Target -eq 'windows'
+  if ($isWin) { Assert-Safe $Path '^[A-Za-z]:\\[A-Za-z0-9_ .()\\-]+$' 'folder (an absolute Windows path such as D:\work\repo)' }
+  else { Assert-Safe $Path '^(~|/)[A-Za-z0-9._/@+~-]*$' 'folder (an absolute WSL path such as /home/me/work/repo, no spaces)' }
+
+  # the name must not hide a job in the default layout of either environment
+  if (Test-WinJob $cfg $Name) { throw "a Windows job named '$Name' already exists; job names are shared across environments" }
+  $wslHas = $false
+  try { $wslHas = [bool](Quiet { Invoke-Wsl $cfg "test -d $($cfg.jobsRoot)/$Name" -NoThrow *> $null; $LASTEXITCODE -eq 0 }) } catch { }
+  if ($wslHas) { throw "a WSL job named '$Name' already exists; job names are shared across environments" }
+
+  if ($isWin) {
+    $dir = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath (Join-Path $dir '.git'))) { throw "not a git repository: $dir" }
+    Assert-FolderFree $cfg 'windows' $dir
+    if ($Branch -and -not (Git-WinOk $dir @('checkout', $Branch))) { Git-Win $dir @('checkout', '-b', $Branch) | Out-Null }
+    if (Git-WinOk $dir @('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')) {
+      & git -C $dir pull --ff-only
+      if ($LASTEXITCODE -ne 0) { Write-Host "warning: git pull failed in $dir; the job was added without updating" }
+    } else { Write-Host 'no upstream branch; skipped git pull' }
+    Write-Host "$Name -> $(Git-Win $dir @('rev-parse', '--abbrev-ref', 'HEAD'))"
+    $final = $dir
+  } else {
+    $branchQ = if ($Branch) { $Branch -replace "'", "'\''" } else { '' }
+    $script = "DIR=$Path`nBRANCH='$branchQ'`n" + @'
+cd "$DIR" 2>/dev/null || { echo "folder not found: $DIR" >&2; exit 1; }
+[ -e .git ] || { echo "not a git repository: $DIR" >&2; exit 1; }
+if [ -n "$BRANCH" ]; then
+  git checkout "$BRANCH" >/dev/null 2>&1 || git checkout -b "$BRANCH" >/dev/null 2>&1 || { echo "could not switch to $BRANCH" >&2; exit 1; }
+fi
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git pull --ff-only || echo "warning: git pull failed in $DIR; the job was added without updating"
+else
+  echo "no upstream branch; skipped git pull"
+fi
+echo "BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+echo "PATH=$(pwd -P)"
+'@
+    Assert-FolderFree $cfg 'wsl' $Path
+    $final = $null
+    foreach ($l in @(Invoke-Wsl $cfg $script | Where-Object { $_ })) {
+      if ("$l" -like 'PATH=*') { $final = "$l".Substring(5) }
+      elseif ("$l" -like 'BRANCH=*') { Write-Host "$Name -> $("$l".Substring(7))" }
+      else { Write-Host $l }
+    }
+    if (-not $final) { throw 'the WSL side did not report the folder' }
+  }
+
+  $reg = Get-Registry
+  $reg[$Name] = [pscustomobject]@{ env = $(if ($isWin) { 'windows' } else { 'wsl' }); path = $final }
+  Save-Registry $reg
 }
 
 # A new job must not land on a folder that a renamed/moved job already uses (it would silently reuse it).
@@ -907,14 +966,6 @@ echo "PATH=$NEW"
 function Cmd-Remove($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
   if ((Get-JobTarget $cfg $Name) -eq 'windows') { Win-Remove $cfg; return }
-  if (-not $Force) {
-    # refuse if there are uncommitted changes or commits not present on any remote branch
-    Invoke-Wsl $cfg @"
-cd $(Wsl-Dir $cfg $Name) 2>/dev/null || { echo "job not found: $Name" >&2; exit 1; }
-[ -z "`$(git status --porcelain)" ] || { echo "uncommitted changes in $Name (use -Force to delete anyway)" >&2; exit 1; }
-[ -z "`$(git log --branches --not --remotes --oneline)" ] || { echo "unpushed commits in $Name (push/merge them or use -Force)" >&2; exit 1; }
-"@
-  }
   # Only a folder inside the jobs root is deleted. A job moved elsewhere by `edit` is just unregistered, so
   # remove can never wipe a folder the user pointed a job at.
   $result = Invoke-Wsl $cfg @"
@@ -939,12 +990,6 @@ function Remove-RegEntry($name) {
 
 function Win-Remove($cfg) {
   $dir = Require-WinJob $cfg
-  if (-not $Force) {
-    if (@(Git-Win $dir @('status', '--porcelain')).Count -gt 0) { throw "uncommitted changes in $Name (use -Force to delete anyway)" }
-    if (@(Git-Win $dir @('log', '--branches', '--not', '--remotes', '--oneline')).Count -gt 0) {
-      throw "unpushed commits in $Name (push/merge them or use -Force)"
-    }
-  }
   # rd removes junctions/links without following them and clears read-only files (git objects, Unity Library)
   $full = [IO.Path]::GetFullPath($dir)
   $rootFull = [IO.Path]::GetFullPath((Get-WinRoot $cfg)).TrimEnd('\')
@@ -988,6 +1033,8 @@ AgentLegion commands:
        [-ClaudeCmd <cmd>] [-WindowsClaudeCmd <cmd>]   claude command/path for WSL / Windows jobs
   add <job> [-Branch <name>] [-Repo <url>] [-Target wsl|windows]
                                 clone the repo to <root>/<job> and check out agent/<job>
+  add <job> -Path <folder> [-Branch <name>] [-Target wsl|windows]
+                                use an existing clone: no clone, just git pull there
                                 (-Target windows = a native Windows PowerShell job, default root %USERPROFILE%\agentjobs)
   list | status [-Json]         show jobs (both environments), branches, uncommitted changes
   start <job>                   open Windows Terminal tab running claude in that job
@@ -1003,7 +1050,7 @@ AgentLegion commands:
   edit <job> [-NewName n] [-Branch b] [-Repo url] [-NewPath dir]
                                 rename the job (label only), switch branch, change origin, or move the job folder
   doctor [-Target windows]      check WSL / Windows, git, claude, repo access, claude auth
-  remove <job> [-Force]         delete job folder (refuses if uncommitted/unpushed work)
+  remove <job>                  delete job folder (no git status check)
 '@ | Write-Host
   }
 }
