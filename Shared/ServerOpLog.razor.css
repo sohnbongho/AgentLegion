@@ -1,0 +1,10 @@
+.server-log pre {
+    height: 11rem;
+    overflow: auto;
+    padding: 0.5rem 0.75rem;
+    background: #0b1020;
+    color: #d1d5db;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}

@@ -136,3 +136,17 @@ window.legionTerm = (function () {
         }
     };
 })();
+
+// Build / Deploy / Run output panel: follow new lines unless the reader scrolled up to look at earlier ones.
+window.legionOps = {
+    stickToBottom(el) {
+        if (!el) return;
+        if (!el.dataset.follow) {
+            el.dataset.follow = "1";
+            el.addEventListener("scroll", () => {
+                el.dataset.follow = el.scrollTop + el.clientHeight >= el.scrollHeight - 24 ? "1" : "0";
+            });
+        }
+        if (el.dataset.follow === "1") el.scrollTop = el.scrollHeight;
+    }
+};

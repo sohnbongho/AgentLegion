@@ -1,0 +1,124 @@
+@implements IDisposable
+@using AgentLegion.Services
+@inject ServerOpsService Ops
+
+@* Build / Deploy / Run / Stop for a WSL job: make in the job folder, copy its binary to the deploy folder, and the
+   game server scripts in ~/script/local (Settings). *@
+<div class="server-bar" aria-label="Game server">
+    <ServerStatusChip />
+
+    <div class="input-group input-group-sm deploy-target">
+        <span class="input-group-text" title="배포할 WSL 폴더. 바꾸면 이 job에 저장됩니다.">배포 경로</span>
+        <input class="form-control" @bind="target" @bind:after="SaveTargetAsync" placeholder="@Ops.DefaultDeployTarget"
+               spellcheck="false" aria-label="배포 경로" />
+        @if (HasOwnTarget)
+        {
+            <button class="btn btn-outline-secondary" @onclick="ResetTargetAsync" title="@($"Settings의 기본값({Ops.DefaultDeployTarget})으로 되돌리기")">기본값</button>
+        }
+        <button class="btn btn-outline-dark" disabled="@Busy" @onclick="() => Start(ServerAction.Build)"
+                title="@($"job 폴더에서 {Ops.BuildCmd} 실행")">
+            <span class="oi oi-wrench" aria-hidden="true"></span> Build
+        </button>
+        <button class="btn btn-outline-primary" disabled="@Busy" @onclick="() => Start(ServerAction.Deploy)"
+                title="@($"{Job.Job}의 {LegionConfig.DeployFile}를 {target} 로 복사")">
+            <span class="oi oi-data-transfer-upload" aria-hidden="true"></span> Deploy
+        </button>
+    </div>
+
+    <div class="btn-group btn-group-sm" role="group" aria-label="Server">
+        <button class="btn btn-outline-danger" disabled="@Busy" @onclick="() => Start(ServerAction.Stop)" title="stop_wind_server.sh 실행 (tmux 세션 종료)">
+            <span class="oi oi-media-stop" aria-hidden="true"></span> Stop
+        </button>
+        <button class="btn btn-outline-success" disabled="@Busy" @onclick="() => Start(ServerAction.Run)" title="@($"run_gameserver.sh 실행 (서버 폴더: {target})")">
+            <span class="oi oi-media-play" aria-hidden="true"></span> Run
+        </button>
+    </div>
+
+    @if (targetMessage is not null)
+    {
+        <span class="small @(targetOk ? "text-success" : "text-danger")">@targetMessage</span>
+    }
+</div>
+
+@if (startError is not null)
+{
+    <div class="alert alert-warning py-2 d-flex" role="alert">
+        <span class="me-auto">@startError</span>
+        <button class="btn btn-sm btn-link py-0 text-nowrap" @onclick="() => startError = null">닫기</button>
+    </div>
+}
+
+<ServerOpLog Job="@Job.Job" VisibleChanged="LogVisibleChanged" />
+
+@code {
+    [Parameter, EditorRequired] public JobInfo Job { get; set; } = default!;
+
+    /// <summary>Tells the page whether the output panel takes room, so the terminal can shrink.</summary>
+    [Parameter] public EventCallback<bool> LogVisibleChanged { get; set; }
+
+    private string? shownJob;
+    private string target = "";
+    private string? targetMessage;
+    private bool targetOk;
+    private string? startError;
+    private bool wasBusy;
+    private bool disposed;
+
+    private bool Busy => Ops.Get(Job.Job) is { Running: true };
+    private bool HasOwnTarget => Ops.GetOwnDeployTarget(Job.Job) is not null;
+
+    protected override void OnInitialized() => Ops.Changed += OnOpsChanged;
+
+    protected override void OnParametersSet()
+    {
+        if (Job.Job == shownJob) return;
+        // the page keeps this component when the sidebar switches jobs
+        shownJob = Job.Job;
+        target = Ops.GetDeployTarget(Job.Job);
+        targetMessage = null;
+        startError = null;
+        wasBusy = Busy;
+    }
+
+    // Only a run starting or ending changes the buttons; the output panel renders the lines itself.
+    private void OnOpsChanged(string job)
+    {
+        if (disposed || !string.Equals(job, Job.Job, StringComparison.OrdinalIgnoreCase)) return;
+        _ = InvokeAsync(() =>
+        {
+            if (disposed || Busy == wasBusy) return;
+            wasBusy = Busy;
+            StateHasChanged();
+        });
+    }
+
+    private void Start(ServerAction action) => startError = Ops.Start(Job, action);
+
+    private async Task SaveTargetAsync()
+    {
+        var r = Ops.SaveDeployTarget(Job.Job, target);
+        targetOk = r.Ok;
+        targetMessage = r.Ok ? "저장됨" : r.Output;
+        if (!r.Ok) return;
+        target = Ops.GetDeployTarget(Job.Job); // blank -> the default
+        var shown = targetMessage;
+        await Task.Delay(2000);
+        if (!disposed && targetMessage == shown)
+        {
+            targetMessage = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ResetTargetAsync()
+    {
+        target = "";
+        await SaveTargetAsync();
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Ops.Changed -= OnOpsChanged;
+    }
+}

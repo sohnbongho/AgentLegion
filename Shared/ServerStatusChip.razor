@@ -1,0 +1,81 @@
+@implements IDisposable
+@using AgentLegion.Services
+@inject ServerOpsService Ops
+
+@* The game server's tmux session and wind processes; polls while shown and after every Deploy / Run / Stop. *@
+<span class="server-status @StatusClass" title="@StatusTooltip" @onclick="RefreshAsync">
+    <span class="dot" aria-hidden="true"></span>@StatusLabel
+</span>
+
+@code {
+    private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(20);
+
+    private ServerStatus? status;
+    private bool loaded;
+    private bool disposed;
+    private CancellationTokenSource? loopCts;
+
+    // A session whose wind processes all exited (crash, Ctrl+C) still exists, so both are shown.
+    private string StatusClass => !loaded ? ""
+        : status is null ? "unknown"
+        : status.Running && status.WindProcesses > 0 ? "on"
+        : !status.Running && status.WindProcesses == 0 ? "off" : "unknown";
+
+    private string StatusLabel => !loaded ? "서버 …"
+        : status is null ? "서버 상태 알 수 없음"
+        : status.Running && status.WindProcesses > 0 ? $"서버 실행 중 · wind {status.WindProcesses}"
+        : status.Running ? "tmux 세션만 있음 · wind 0"
+        : status.WindProcesses > 0 ? $"tmux 없음 · wind {status.WindProcesses}" : "서버 중지됨";
+
+    private string StatusTooltip => status is null
+        ? "클릭하면 다시 확인합니다"
+        : $"tmux 세션: {(status.Running ? $"실행 중 (창 {status.Windows}개)" : "없음")}\nwind 프로세스: {status.WindProcesses}개\n클릭하면 다시 확인합니다";
+
+    protected override void OnInitialized() => Ops.Finished += OnFinished;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        // not during prerender: the status shells out to WSL
+        loopCts = new CancellationTokenSource();
+        _ = LoopAsync(loopCts.Token);
+    }
+
+    private async Task LoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RefreshEvery);
+        try
+        {
+            do { await RefreshAsync(); }
+            while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    // a Deploy / Run / Stop from any job changed what the server runs
+    private void OnFinished(ServerOpRun run)
+    {
+        if (!disposed && run.Action != ServerAction.Build) _ = RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        var s = await Ops.GetStatusAsync();
+        if (disposed) return;
+        await InvokeAsync(() =>
+        {
+            if (disposed) return;
+            status = s;
+            loaded = true;
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Ops.Finished -= OnFinished;
+        loopCts?.Cancel();
+        loopCts?.Dispose();
+    }
+}

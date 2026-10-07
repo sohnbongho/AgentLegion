@@ -1,0 +1,17 @@
+.server-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.deploy-target {
+    width: auto;
+    flex: 1 1 22rem;
+    max-width: 34rem;
+}
+
+.deploy-target input {
+    font-family: Consolas, "Cascadia Mono", monospace;
+}

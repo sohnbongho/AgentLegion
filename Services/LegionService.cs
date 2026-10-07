@@ -36,15 +36,26 @@ namespace AgentLegion.Services
 
     /// <param name="WindowsJobsRoot">Where Windows PowerShell jobs live; null = the default %USERPROFILE%\agentjobs.</param>
     /// <param name="TerminalFontFamily">Job terminal font (CSS font-family); null = the built-in monospace list.</param>
+    /// <param name="DeployRoot">WSL folder a job's server binary is deployed to unless the job has its own (deploy-targets.json).</param>
+    /// <param name="BuildCmd">Command a WSL job's Build button runs in the job folder.</param>
+    /// <param name="ServerScriptDir">WSL folder holding stop_wind_server.sh and run_gameserver.sh.</param>
+    /// <param name="ServerSession">tmux session the server scripts start and stop.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
         SessionStateDetection StateDetection = SessionStateDetection.Title,
         string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true,
-        string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize)
+        string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize,
+        string DeployRoot = LegionConfig.DefaultDeployRoot, string BuildCmd = LegionConfig.DefaultBuildCmd,
+        string ServerScriptDir = LegionConfig.DefaultServerScriptDir, string ServerSession = LegionConfig.DefaultServerSession)
     {
         public const int DefaultTerminalFontSize = 16;
         public const int MinTerminalFontSize = 8;
         public const int MaxTerminalFontSize = 40;
         public const string DefaultWindowsRoot = @"%USERPROFILE%\agentjobs";
+        public const string DefaultDeployRoot = "~/wind/data";
+        public const string DefaultBuildCmd = "make";
+        public const string DefaultServerScriptDir = "~/script/local";
+        public const string DefaultServerSession = "wind";
+        public const string DeployFile = "wind";
 
         /// <summary>The Windows jobs root with environment variables expanded.</summary>
         public string ResolvedWindowsRoot =>
@@ -159,10 +170,13 @@ namespace AgentLegion.Services
                     ? Math.Clamp(n, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize)
                     : LegionConfig.DefaultTerminalFontSize;
                 var fontFamily = Str("terminalFontFamily")?.Trim();
+                string Or(string name, string fallback) => Str(name)?.Trim() is { Length: > 0 } v ? v : fallback;
                 return new LegionConfig(Str("distro"), Str("jobsRoot") ?? "~/agentjobs", Str("repo") ?? "", Str("claudeCmd") ?? "claude",
                     detection, Str("windowsJobsRoot"), Str("windowsClaudeCmd") ?? "claude",
                     !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False),
-                    string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize);
+                    string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize,
+                    Or("deployRoot", LegionConfig.DefaultDeployRoot), Or("buildCmd", LegionConfig.DefaultBuildCmd),
+                    Or("serverScriptDir", LegionConfig.DefaultServerScriptDir), Or("serverSession", LegionConfig.DefaultServerSession));
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -187,21 +201,62 @@ namespace AgentLegion.Services
         /// Saves the job terminal font into legion.json (legion.ps1 does not use it; `init` keeps it).
         /// A blank family removes the setting so the built-in font list is used.
         /// </summary>
-        public CommandResult SaveTerminalFont(string? family, int size)
+        public CommandResult SaveTerminalFont(string? family, int size) => UpdateConfig("터미널 글꼴", root =>
+        {
+            if (string.IsNullOrWhiteSpace(family)) root.Remove("terminalFontFamily");
+            else root["terminalFontFamily"] = family.Trim();
+            root["terminalFontSize"] = Math.Clamp(size, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize);
+        });
+
+        /// <summary>A WSL path the server scripts can take unquoted: absolute or ~/..., no spaces or shell characters.</summary>
+        public static bool IsValidWslPath(string? path) =>
+            path is not null && Regex.IsMatch(path.Trim(), @"^(~|~/[A-Za-z0-9_./@+-]*|/[A-Za-z0-9_./@+-]*)$");
+
+        private static readonly Regex BuildCmdPattern = new(@"^[A-Za-z0-9_./=:@+ -]+$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Saves the Build / Deploy / Run settings into legion.json (legion.ps1 does not use them; `init` keeps them).
+        /// Blank values fall back to the defaults.
+        /// </summary>
+        public CommandResult SaveServerSettings(string? deployRoot, string? buildCmd, string? scriptDir, string? session)
+        {
+            if (!string.IsNullOrWhiteSpace(deployRoot) && !IsValidWslPath(deployRoot))
+                return new CommandResult(false, $"배포 경로가 올바르지 않습니다: {deployRoot} (절대 경로 또는 ~/..., 공백 불가)");
+            if (!string.IsNullOrWhiteSpace(scriptDir) && !IsValidWslPath(scriptDir))
+                return new CommandResult(false, $"서버 스크립트 폴더가 올바르지 않습니다: {scriptDir}");
+            if (!string.IsNullOrWhiteSpace(buildCmd) && !BuildCmdPattern.IsMatch(buildCmd.Trim()))
+                return new CommandResult(false, $"빌드 명령에 쓸 수 없는 문자가 있습니다: {buildCmd} (따옴표, ;, |, & 등 불가)");
+            if (!string.IsNullOrWhiteSpace(session) && !Regex.IsMatch(session.Trim(), "^[A-Za-z0-9_.-]+$"))
+                return new CommandResult(false, $"tmux 세션 이름이 올바르지 않습니다: {session}");
+
+            return UpdateConfig("서버 설정", root =>
+            {
+                void Set(string key, string? value, string fallback)
+                {
+                    if (string.IsNullOrWhiteSpace(value) || value.Trim() == fallback) root.Remove(key);
+                    else root[key] = value.Trim();
+                }
+                Set("deployRoot", deployRoot, LegionConfig.DefaultDeployRoot);
+                Set("buildCmd", buildCmd, LegionConfig.DefaultBuildCmd);
+                Set("serverScriptDir", scriptDir, LegionConfig.DefaultServerScriptDir);
+                Set("serverSession", session, LegionConfig.DefaultServerSession);
+            });
+        }
+
+        // Edits legion.json in place, keeping the keys this app does not know about.
+        private CommandResult UpdateConfig(string what, Action<JsonObject> edit)
         {
             try
             {
                 var root = File.Exists(ConfigPath) ? JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject : null;
                 root ??= new JsonObject();
-                if (string.IsNullOrWhiteSpace(family)) root.Remove("terminalFontFamily");
-                else root["terminalFontFamily"] = family.Trim();
-                root["terminalFontSize"] = Math.Clamp(size, LegionConfig.MinTerminalFontSize, LegionConfig.MaxTerminalFontSize);
+                edit(root);
                 File.WriteAllText(ConfigPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
                 return new CommandResult(true, "");
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
-                return new CommandResult(false, $"터미널 글꼴을 저장하지 못했습니다: {ex.Message}");
+                return new CommandResult(false, $"{what}을 저장하지 못했습니다: {ex.Message}");
             }
         }
 

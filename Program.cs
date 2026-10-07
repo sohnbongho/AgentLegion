@@ -25,6 +25,7 @@ namespace AgentLegion
             builder.Services.AddSingleton<JobStore>();
             builder.Services.AddSingleton<SessionManager>();
             builder.Services.AddSingleton<WslInfoService>();
+            builder.Services.AddSingleton<ServerOpsService>();
             // per browser circuit: each tab has its own Redis connection
             builder.Services.AddScoped<RedisConnectionService>();
             builder.Services.AddScoped<RedisKeyService>();

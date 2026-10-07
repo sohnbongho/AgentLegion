@@ -87,7 +87,12 @@ else if (!running && started)
     <div class="alert alert-secondary py-2" role="status">세션이 종료되었습니다. Start로 다시 시작할 수 있습니다.</div>
 }
 
-<div @ref="termEl" class="terminal-host"></div>
+@if (Store.Jobs.FirstOrDefault(j => j.Job == Name) is { IsWindows: false } serverJob)
+{
+    <ServerControls Job="serverJob" LogVisibleChanged="v => serverLogVisible = v" />
+}
+
+<div @ref="termEl" class="terminal-host @TerminalHeightClass"></div>
 
 @code {
     private record TermSize(int Cols, int Rows);
@@ -117,7 +122,13 @@ else if (!running && started)
     private bool showEditor;
     private bool confirmNew;           // "end the running session and start a new conversation?" is showing
     private CommandResult? editorResult;
+    private bool serverLogVisible;
     private bool disposed;
+
+    // the Build / Deploy bar (WSL jobs) and its output panel take room above the terminal
+    private string TerminalHeightClass =>
+        Store.Jobs.FirstOrDefault(j => j.Job == Name) is not { IsWindows: false } ? ""
+        : serverLogVisible ? "with-server-log" : "with-server";
     private string? error;
     private TermSize size = new(120, 30);
 

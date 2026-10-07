@@ -2,6 +2,7 @@
 @inject LegionService Legion
 @inject SessionManager Sessions
 @inject JobStore Store
+@inject ServerOpsService Ops
 
 <div class="card mb-3 job-editor">
     <div class="card-body">
@@ -145,6 +146,7 @@
                 ClaudeNameChanged && !ClaudeNameCleared ? claudeName : null,
                 ClaudeNameCleared);
             result = r;
+            if (r.Ok && NameChanged) Ops.RenameJob(Job.Job, finalName); // the job keeps its deploy folder
             // refresh even on failure: an earlier step (e.g. the repo) may already have been applied
             await Store.RefreshAsync();
             if (r.Ok) await OnSaved.InvokeAsync((finalName, r));

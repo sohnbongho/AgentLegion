@@ -281,7 +281,8 @@ function Cmd-Init {
   elseif ($old -and $old.PSObject.Properties['windowsJobsRoot']) { $cfg['windowsJobsRoot'] = $old.windowsJobsRoot }
   if ($WindowsClaudeCmd) { $cfg['windowsClaudeCmd'] = $WindowsClaudeCmd.Trim() }
   elseif ($old -and $old.PSObject.Properties['windowsClaudeCmd']) { $cfg['windowsClaudeCmd'] = $old.windowsClaudeCmd }
-  foreach ($k in 'stateDetection', 'resumeLastSession', 'codeCmd', 'terminalFontFamily', 'terminalFontSize') {
+  foreach ($k in 'stateDetection', 'resumeLastSession', 'codeCmd', 'terminalFontFamily', 'terminalFontSize',
+            'deployRoot', 'buildCmd', 'serverScriptDir', 'serverSession') {
     if ($old -and $old.PSObject.Properties[$k]) { $cfg[$k] = $old.$k }
   }
   $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8

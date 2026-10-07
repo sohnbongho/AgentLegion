@@ -1,0 +1,132 @@
+@implements IDisposable
+@using AgentLegion.Services
+@inject ServerOpsService Ops
+@inject IJSRuntime JS
+
+@* Live output of a job's latest Build / Deploy / Run / Stop. *@
+@if (Run is { } run)
+{
+    <div class="server-log card mb-2">
+        <div class="card-header py-1 d-flex align-items-center gap-2">
+            <span class="badge @RunBadge(run)">@RunLabel(run)</span>
+            <strong class="text-nowrap">@run.Job · @run.Action</strong>
+            <span class="text-muted small text-truncate" title="@run.Detail">@run.Detail</span>
+            <span class="text-muted small ms-auto text-nowrap">@FormatElapsed(run.Elapsed)</span>
+            @if (run.Running && run.Action == ServerAction.Build)
+            {
+                <button class="btn btn-sm btn-outline-danger py-0" disabled="@run.Cancelled" @onclick="() => Ops.CancelAsync(run.Job)">취소</button>
+            }
+            <button class="btn btn-sm btn-link py-0" @onclick="() => collapsed = !collapsed">@(collapsed ? "펼치기" : "접기")</button>
+            @if (!run.Running)
+            {
+                <button class="btn btn-sm btn-link py-0" @onclick="() => Ops.Clear(run.Job)">닫기</button>
+            }
+        </div>
+        @if (!collapsed)
+        {
+            <pre @ref="logEl" class="card-body mb-0">@(string.IsNullOrEmpty(run.Text) ? "(출력 없음)" : run.Text)</pre>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? Job { get; set; }
+
+    /// <summary>Tells the page whether the panel takes room (the job page shrinks its terminal).</summary>
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    private string? shownJob;
+    private ServerOpRun? shownRun;
+    private bool collapsed;
+    private bool? lastVisible;
+    private ElementReference logEl;
+    private int renderQueued;
+    private int ticking;
+    private bool disposed;
+
+    private ServerOpRun? Run => Job is null ? null : Ops.Get(Job);
+
+    protected override void OnInitialized() => Ops.Changed += OnOpsChanged;
+
+    protected override void OnParametersSet()
+    {
+        if (Job == shownJob) return;
+        shownJob = Job;
+        shownRun = Run;
+        collapsed = false;
+        EnsureTicker(); // a job whose build is still running
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var visible = Run is not null;
+        if (visible != lastVisible)
+        {
+            lastVisible = visible;
+            await VisibleChanged.InvokeAsync(visible);
+        }
+
+        if (visible && !collapsed)
+        {
+            try { await JS.InvokeVoidAsync("legionOps.stickToBottom", logEl); }
+            catch (JSDisconnectedException) { }
+            catch (InvalidOperationException) { /* element not rendered yet */ }
+        }
+    }
+
+    // Output can arrive hundreds of lines a second during a build: render at most four times a second.
+    private void OnOpsChanged(string job)
+    {
+        if (disposed || !string.Equals(job, Job, StringComparison.OrdinalIgnoreCase)) return;
+        EnsureTicker();
+        QueueRender(TimeSpan.FromMilliseconds(250));
+    }
+
+    private void QueueRender(TimeSpan delay)
+    {
+        if (Interlocked.Exchange(ref renderQueued, 1) == 1) return;
+        _ = Task.Delay(delay).ContinueWith(_ => InvokeAsync(() =>
+        {
+            Interlocked.Exchange(ref renderQueued, 0);
+            if (disposed) return;
+            // a new run opens folded-up output again
+            if (Run is { } r && !ReferenceEquals(r, shownRun))
+            {
+                shownRun = r;
+                collapsed = false;
+            }
+            StateHasChanged();
+        }));
+    }
+
+    // Keeps the elapsed time moving while a run prints nothing.
+    private void EnsureTicker()
+    {
+        if (Run is not { Running: true }) return;
+        if (Interlocked.Exchange(ref ticking, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            while (!disposed && Run is { Running: true })
+            {
+                await Task.Delay(1000);
+                QueueRender(TimeSpan.Zero);
+            }
+            Interlocked.Exchange(ref ticking, 0);
+        });
+    }
+
+    private static string RunBadge(ServerOpRun r) =>
+        r.Running ? "bg-primary" : r.Cancelled ? "bg-secondary" : r.Ok ? "bg-success" : "bg-danger";
+
+    private static string RunLabel(ServerOpRun r) =>
+        r.Running ? (r.Cancelled ? "취소 중" : "실행 중") : r.Cancelled ? "취소됨" : r.Ok ? "완료" : $"실패 (exit {r.ExitCode})";
+
+    private static string FormatElapsed(TimeSpan t) =>
+        t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes}분 {t.Seconds}초" : $"{t.TotalSeconds:0.0}초";
+
+    public void Dispose()
+    {
+        disposed = true;
+        Ops.Changed -= OnOpsChanged;
+    }
+}

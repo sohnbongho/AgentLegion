@@ -37,10 +37,10 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | 화면 | 내용 |
 |---|---|
 | Dashboard | 사용법 안내 |
-| Jobs | job 추가, 목록(Claude 이름·환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove |
-| job 화면 (`/jobs/<job>`) | claude 터미널 + `Claude · <이름>` 배지 + 상단바 정보 + 같은 도구 버튼 |
+| Jobs | job 추가, 목록(Claude 이름·환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove, (WSL job) 서버 Build / Deploy / Stop / Run, 서버 상태 칩 |
+| job 화면 (`/jobs/<job>`) | claude 터미널 + `Claude · <이름>` 배지 + 상단바 정보 + 같은 도구 버튼 + (WSL job) 서버 Build / Deploy / Stop / Run |
 | Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
-| Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기 |
+| Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기, 서버 빌드·배포(기본 배포 경로·빌드 명령·스크립트 폴더) |
 | 사이드바 | Agents 목록(상태 점·라벨·`PS`·`WSL` 태그·변경 수), 하단에 WSL 상태 |
 
 ### job 환경: WSL / Windows PowerShell
@@ -85,6 +85,21 @@ WSL 칩과 사이드바 하단에 마우스를 올리면 WSL 패키지 버전·O
 - **Diff / Push / Remove**: 변경 확인, job 브랜치 push, 삭제. 삭제는 git 상태(미커밋/미push)를 검사하지 않고 바로 지우며, 루트 밖으로 옮긴 job은 폴더를 지우지 않고 목록에서만 뺍니다.
   병합은 CLI의 `merge`를 씁니다.
 
+### 서버 빌드 · 배포 · 실행 (WSL job)
+job 화면 터미널 위의 줄과 Jobs 목록의 **Server** 열에 있습니다(Windows job에는 없음). `~/script/local`의 서버 스크립트를 job 단위로 쓰도록 옮긴 것입니다. Jobs 목록의 Stop은 게임 서버 중지이고, Actions 열의 Stop(claude 세션 종료)과는 다릅니다. 배포 경로는 job 화면에서 바꾸며, Jobs 목록의 Deploy/Run도 그 경로를 씁니다(버튼에 마우스를 올리면 보임).
+
+| 버튼 | 동작 |
+|---|---|
+| **Build** | job 폴더에서 빌드 명령(기본 `make`)을 실행합니다. wind 서버의 `make`는 `make all` = clean 후 전체 빌드이며, 바뀐 파일만 빌드하려면 Settings에서 `make wind`로 바꿉니다. 실행 중에는 **취소**로 make와 자식 프로세스를 함께 멈춥니다. |
+| **배포 경로** | 이 job의 Deploy 대상이자 Run의 서버 폴더. 기본은 Settings의 *기본 배포 경로*(`~/wind/data`)이고, 칸을 고치면(Enter/포커스 이동) 이 job에만 저장됩니다. **기본값** 버튼으로 되돌립니다. |
+| **Deploy** | `deploy_gameServer.sh`처럼 `wind`를 배포 경로로 복사하되, 원본은 `~/wind/server`가 아닌 **이 job 폴더**입니다. 임시 파일로 복사한 뒤 이름을 바꿔 교체하므로 서버가 실행 중이어도 되고(`Text file busy` 없음), 대상이 `../serverBinary/...`를 가리키는 심볼릭 링크면 **링크만 실제 파일로 바뀌고 serverBinary 쪽은 덮어쓰지 않습니다.** 끝나면 원본·대상의 sha1을 보여 줍니다. |
+| **Stop** | `stop_wind_server.sh` 실행(tmux 세션 종료). |
+| **Run** | `run_gameserver.sh`를 실행하되 `WIND_HOME`을 배포 경로로 바꾸고 마지막 `tmux attach`는 뺍니다. 세션이 이미 있으면 거부하고, 끝나면 tmux 창 수와 wind/sessionServer 프로세스를 보여 줍니다. 서버 화면은 WSL 터미널에서 `attach_wind_server.sh`로 봅니다. |
+
+- 상태 칩(job 화면 왼쪽, Jobs 제목 옆): tmux 세션(`wind`)과 wind 프로세스 수를 20초마다, 그리고 Deploy / Run / Stop이 끝날 때마다 확인합니다(클릭하면 즉시). wind는 뜬 뒤 프로세스 이름을 `WindServer`로 바꾸므로 두 이름을 모두 셉니다. 세션은 있는데 wind가 없으면 `tmux 세션만 있음`으로 표시합니다.
+- 출력은 아래 패널(Jobs 목록에서는 표 아래)에 실시간으로 나오고, 다른 화면에 갔다 와도 이어서 보입니다. 한 job에서는 한 번에 하나만, Deploy / Run / Stop은 서버를 공유하므로 모든 job을 통틀어 하나씩만 실행됩니다.
+- 스크립트 폴더·tmux 세션 이름·빌드 명령은 Settings에서 바꿉니다. job별 배포 경로는 `deploy-targets.json`에 저장되고, Edit로 이름을 바꿔도 따라갑니다.
+
 ### 터미널 복사/붙여넣기
 - 마우스로 선택 → `Ctrl+C` 복사(선택이 없으면 평소처럼 **중단 신호**). `Ctrl+Shift+C`는 항상 복사만 합니다.
 - 붙여넣기 `Ctrl+V` / `Ctrl+Shift+V`.
@@ -101,6 +116,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `legion.json` | 환경 설정(Settings 화면이 저장) |
 | `jobs.json` | 이름/폴더가 기본 규칙과 다른 job만 기록(`edit`이 관리) |
 | `claude-names.json` | job 이름과 다른 Claude 이름을 가진 job만 기록(`{ "job1": "api-worker" }`, `add`/`edit`이 관리) |
+| `deploy-targets.json` | 기본 배포 경로와 다른 경로를 쓰는 job만 기록(`{ "job1": "~/wind/data_local" }`, job 화면의 배포 경로 칸이 관리) |
 | `logs/session-state.log` | 세션 상태 전환 기록(상태 표시가 이상할 때 원인 확인용) |
 
 `legion.json` 키:
@@ -116,6 +132,10 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `stateDetection` | `title` | `activity`로 바꾸면 "출력이 계속 나오면 진행 중"으로 판정(Claude가 아닌 프로그램용) |
 | `resumeLastSession` | `true` | `false`면 항상 새 대화로 시작 |
 | `codeCmd` | `code` | 에디터 명령 (`cursor`, `code-insiders` …) |
+| `deployRoot` | `~/wind/data` | WSL job의 기본 배포 경로(Deploy 대상, Run의 `WIND_HOME`). Settings에서 지정 |
+| `buildCmd` | `make` | Build가 job 폴더에서 실행하는 명령. Settings에서 지정 |
+| `serverScriptDir` | `~/script/local` | `stop_wind_server.sh` / `run_gameserver.sh`가 있는 폴더. Settings에서 지정 |
+| `serverSession` | `wind` | 서버 스크립트가 쓰는 tmux 세션 이름(상태 확인·중복 실행 검사용). Settings에서 지정 |
 
 ## CLI (`legion.ps1`)
 웹 UI가 내부에서 쓰는 스크립트이며 직접 실행할 수도 있습니다. `-Target windows`를 주지 않는 명령은 job이 있는 환경을 자동으로 찾습니다.

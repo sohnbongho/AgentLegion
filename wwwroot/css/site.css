@@ -77,6 +77,15 @@ a, .btn-link {
     overflow: hidden;
 }
 
+/* WSL jobs: the Build / Deploy / Run bar, and its output panel when one is open */
+.terminal-host.with-server {
+    height: calc(100vh - 15rem);
+}
+
+.terminal-host.with-server-log {
+    height: calc(100vh - 28rem);
+}
+
 .terminal-host .xterm-viewport {
     background-color: #0b1020 !important;
 }

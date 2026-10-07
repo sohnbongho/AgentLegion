@@ -102,6 +102,44 @@
     </div>
 </div>
 
+<h2 class="h5 mt-4">서버 빌드 · 배포 (WSL job)</h2>
+<p class="form-text mt-0" style="max-width: 36rem;">
+    WSL job 화면의 <strong>Build / Deploy / Stop / Run</strong> 버튼이 쓰는 값입니다. 비워두면 기본값을 씁니다.
+</p>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="deployroot">기본 배포 경로</label>
+    <input id="deployroot" class="form-control font-monospace" @bind="deployRoot" placeholder="@LegionConfig.DefaultDeployRoot" spellcheck="false" />
+    <div class="form-text">
+        Deploy가 job 폴더의 <code>@LegionConfig.DeployFile</code>를 복사할 WSL 폴더이자 Run이 서버를 띄우는 폴더(<code>WIND_HOME</code>).
+        job 화면에서 job마다 따로 바꿀 수 있고, 바꾸지 않은 job은 이 값을 씁니다.
+    </div>
+</div>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="buildcmd">빌드 명령</label>
+    <input id="buildcmd" class="form-control font-monospace" @bind="buildCmd" placeholder="@LegionConfig.DefaultBuildCmd" spellcheck="false" />
+    <div class="form-text">
+        Build가 job 폴더에서 실행하는 명령. wind 서버의 <code>make</code>는 <code>make all</code>(clean 후 전체 빌드)이고,
+        <code>make wind</code>는 바뀐 파일만 다시 빌드합니다.
+    </div>
+</div>
+
+<div class="row g-2 mb-3" style="max-width: 36rem;">
+    <div class="col-8">
+        <label class="form-label" for="scriptdir">서버 스크립트 폴더</label>
+        <input id="scriptdir" class="form-control font-monospace" @bind="serverScriptDir" placeholder="@LegionConfig.DefaultServerScriptDir" spellcheck="false" />
+    </div>
+    <div class="col-4">
+        <label class="form-label" for="session">tmux 세션</label>
+        <input id="session" class="form-control font-monospace" @bind="serverSession" placeholder="@LegionConfig.DefaultServerSession" spellcheck="false" />
+    </div>
+    <div class="col-12 form-text mt-1">
+        Stop은 <code>stop_wind_server.sh</code>, Run은 <code>run_gameserver.sh</code>를 이 폴더에서 실행합니다.
+        Run은 스크립트의 <code>WIND_HOME</code>을 배포 경로로 바꾸고 마지막 <code>tmux attach</code>는 빼고 실행합니다.
+    </div>
+</div>
+
 <button class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(jobsRoot))" @onclick="SaveAsync">
     @(saving ? "Saving..." : "Save")
 </button>
@@ -136,6 +174,10 @@
     private string? foundMessage;
     private string? termFontFamily;
     private int termFontSize = LegionConfig.DefaultTerminalFontSize;
+    private string? deployRoot = LegionConfig.DefaultDeployRoot;
+    private string? buildCmd = LegionConfig.DefaultBuildCmd;
+    private string? serverScriptDir = LegionConfig.DefaultServerScriptDir;
+    private string? serverSession = LegionConfig.DefaultServerSession;
 
     private static readonly string[] fontSuggestions =
     {
@@ -167,6 +209,10 @@
             windowsClaudeCmd = cfg.WindowsClaudeCmd;
             termFontFamily = cfg.TerminalFontFamily;
             termFontSize = cfg.TerminalFontSize;
+            deployRoot = cfg.DeployRoot;
+            buildCmd = cfg.BuildCmd;
+            serverScriptDir = cfg.ServerScriptDir;
+            serverSession = cfg.ServerSession;
         }
         distros = await Legion.GetDistrosAsync();
     }
@@ -181,6 +227,7 @@
                 string.IsNullOrWhiteSpace(claudeCmd) ? "claude" : claudeCmd,
                 string.IsNullOrWhiteSpace(windowsClaudeCmd) ? "claude" : windowsClaudeCmd);
             if (result.Ok) result = Legion.SaveTerminalFont(termFontFamily, termFontSize);
+            if (result.Ok) result = Legion.SaveServerSettings(deployRoot, buildCmd, serverScriptDir, serverSession);
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally
