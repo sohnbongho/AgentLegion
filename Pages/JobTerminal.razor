@@ -24,6 +24,10 @@
             <span class="badge bg-light text-dark border" title="claude runs in WSL">WSL</span>
         }
     }
+    @if (ClaudeSessionName is { } cn)
+    {
+        <span class="badge bg-light text-dark border" title="@($"claude --name {cn} · 다른 Claude 세션에서 @{cn} 로 메시지를 보낼 수 있습니다")">Claude · @cn</span>
+    }
     @if (Sessions.ResumedId(Name) is { } rid)
     {
         <span class="badge bg-light text-dark border" title="@($"Resumed Claude session {rid}")">이어서 · @ShortId(rid)</span>
@@ -284,6 +288,10 @@ else if (!running && started)
     }
 
     private static string ShortId(string id) => id.Length > 8 ? id[..8] : id;
+
+    // The running session's name; when stopped, the name the next start will use.
+    private string? ClaudeSessionName =>
+        Sessions.SessionName(Name) ?? Store.Jobs.FirstOrDefault(j => j.Job == Name)?.SessionName;
 
     private void CloseEditor() => showEditor = false;
 

@@ -8,6 +8,7 @@ job은 **WSL**에서 돌릴 수도, **Windows PowerShell**에서 돌릴 수도 �
 - 다시 열면 마지막 대화를 이어서 시작합니다(`claude --resume`).
 - 진행 중 / 응답 대기 상태, 브랜치·repo·폴더·토큰 사용량을 한눈에 봅니다.
 - 에디터(VS Code/Cursor)와 일반 터미널을 job 폴더에서 바로 엽니다.
+- job마다 **Claude 이름**(`claude --name`)을 붙여, Claude 세션끼리 이름으로 메시지를 주고받을 수 있습니다.
 
 ## 목차
 1. [요구사항](#요구사항) · 2. [빠른 시작](#빠른-시작) · 3. [웹 UI 기능](#웹-ui-기능) · 4. [설정 파일](#설정-파일)
@@ -36,8 +37,8 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | 화면 | 내용 |
 |---|---|
 | Dashboard | 사용법 안내 |
-| Jobs | job 추가, 목록(환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove |
-| job 화면 (`/jobs/<job>`) | claude 터미널 + 상단바 정보 + 같은 도구 버튼 |
+| Jobs | job 추가, 목록(Claude 이름·환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove |
+| job 화면 (`/jobs/<job>`) | claude 터미널 + `Claude · <이름>` 배지 + 상단바 정보 + 같은 도구 버튼 |
 | Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
 | Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기 |
 | 사이드바 | Agents 목록(상태 점·라벨·`PS`·`WSL` 태그·변경 수), 하단에 WSL 상태 |
@@ -57,6 +58,15 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
   Claude Code가 터미널 제목(OSC 0)으로 내보내는 상태를 읽습니다 — 작업 중 `◐`/`◑` 교대, 대기·질문 중 `✳`. 화면 갱신 방식이나 탭을 열어 두었는지와 무관합니다.
   전환 기록은 `logs/session-state.log`에 남습니다.
 - 웹 서버를 종료하면 모든 세션도 종료됩니다.
+
+### Claude 이름 (세션 간 메시지)
+- 세션은 `claude --name <Claude 이름>`으로 시작합니다. 같은 PC의 다른 Claude 세션은 이 이름으로 메시지를 보내거나(예: `@api-worker 스키마 바꿨으니 테스트 다시 돌려줘`),
+  "api-worker가 끝나면 알려줘"처럼 **그 세션이 응답 대기가 되면 알림**을 받을 수 있습니다(Claude Code의 cross-session messaging, 별도 설정 없음).
+  필요 버전: WSL·Linux v2.1.224+, Windows 네이티브 v2.1.234+, 끝나면 알림은 v2.1.236+. [문서](https://code.claude.com/docs/en/cross-session-messaging)
+- WSL job과 Windows job은 claude 설정 폴더(`~/.claude`)가 서로 달라, **환경이 다른 세션끼리(WSL ↔ Windows) 메시지가 전달되는지는 확인되지 않았습니다.** 의존하기 전에 직접 시험해 보세요.
+- Add job / Edit의 **Claude name**에서 정합니다. 비우면 job 이름을 씁니다. 영문·숫자·`_` `.` `-`, 64자 이하이며 job끼리 겹칠 수 없습니다(대소문자 무시).
+- 이름은 세션을 시작할 때 적용되므로 **세션을 Stop한 뒤** 바꿉니다. 실행 중인 세션에서 `/rename`으로 바꾼 이름은 AgentLegion에 반영되지 않습니다.
+- 표시: Jobs 목록의 *Claude name* 열, job 화면의 `Claude · <이름>` 배지, 사이드바 항목의 툴팁.
 
 ### 상단바 (job 화면)
 job 이름 · git 브랜치 · **origin repo**(인증 정보 제거) · 폴더 · (Windows job은 "Windows PowerShell" / WSL job은 배포판·WSL 버전·실행 상태) · **누적 토큰**(input + output + cache write, cache read는 별도). 20초마다 갱신합니다.
@@ -90,6 +100,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 |---|---|
 | `legion.json` | 환경 설정(Settings 화면이 저장) |
 | `jobs.json` | 이름/폴더가 기본 규칙과 다른 job만 기록(`edit`이 관리) |
+| `claude-names.json` | job 이름과 다른 Claude 이름을 가진 job만 기록(`{ "job1": "api-worker" }`, `add`/`edit`이 관리) |
 | `logs/session-state.log` | 세션 상태 전환 기록(상태 표시가 이상할 때 원인 확인용) |
 
 `legion.json` 키:
@@ -110,11 +121,11 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 웹 UI가 내부에서 쓰는 스크립트이며 직접 실행할 수도 있습니다. `-Target windows`를 주지 않는 명령은 job이 있는 환경을 자동으로 찾습니다.
 ```powershell
 .\legion.ps1 init -Repo git@github.com:me/proj.git -Distro Ubuntu [-Root ~/agentjobs] [-WindowsRoot D:\jobs]
-.\legion.ps1 add job1 [-Branch feature/x] [-Repo <url>] [-Target windows]   # 기본 브랜치 agent/<job>
+.\legion.ps1 add job1 [-Branch feature/x] [-Repo <url>] [-Target windows] [-ClaudeName api-worker]   # 기본 브랜치 agent/<job>
 .\legion.ps1 add job2 -Path D:\work\repo [-Branch b] [-Target windows]   # 기존 clone 사용: clone 없이 git pull만
 .\legion.ps1 status [-Json]                  # 모든 job: 환경, 브랜치, 미커밋 변경 수, repo, 폴더
-.\legion.ps1 edit job1 [-NewName n] [-Branch b] [-Repo url] [-NewPath dir]
-.\legion.ps1 start job1 | start-all          # Windows Terminal 새 탭에서 claude 실행
+.\legion.ps1 edit job1 [-NewName n] [-Branch b] [-Repo url] [-NewPath dir] [-ClaudeName c | -ClearClaudeName]
+.\legion.ps1 start job1 | start-all          # Windows Terminal 새 탭(제목 = Claude 이름)에서 claude --name <Claude 이름> 실행
 .\legion.ps1 run job1 -Prompt "..." [-TimeoutSec 600]   # 비대화형 claude -p
 .\legion.ps1 diff job1 [-Base main]          # base 대비 커밋/변경 요약
 .\legion.ps1 push job1                       # job 브랜치 push

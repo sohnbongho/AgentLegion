@@ -27,7 +27,15 @@
                 <input id="edRepo" class="form-control" @bind="repo" @bind:event="oninput" />
                 <div class="form-text">origin URL을 바꿉니다. 인증 정보가 든 URL은 화면에 표시되지 않습니다.</div>
             </div>
-            <div class="col-12">
+            <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="edClaude">Claude name</label>
+                <input id="edClaude" class="form-control" @bind="claudeName" @bind:event="oninput" placeholder="@NameAfterSave" />
+                <div class="form-text">
+                    claude를 <code>--name</code>으로 시작할 때 쓰는 세션 이름입니다. 다른 Claude 세션이 이 이름으로 메시지를 보냅니다.
+                    비우면 job 이름을 씁니다.
+                </div>
+            </div>
+            <div class="col-12 col-md-8">
                 <label class="form-label small mb-1" for="edPath">작업 경로 (Folder)</label>
                 <input id="edPath" class="form-control" @bind="path" @bind:event="oninput" />
                 <div class="form-text">
@@ -41,7 +49,7 @@
         @if (Blocked)
         {
             <div class="alert alert-warning py-2 mt-3 mb-0" role="alert">
-                실행 중인 세션이 있습니다. 이름, 브랜치, 작업 경로를 바꾸려면 먼저 <strong>Stop</strong>으로 세션을 종료하세요.
+                실행 중인 세션이 있습니다. 이름, Claude name, 브랜치, 작업 경로를 바꾸려면 먼저 <strong>Stop</strong>으로 세션을 종료하세요.
                 (Repo만 바꾸는 것은 실행 중에도 가능합니다.)
             </div>
         }
@@ -79,6 +87,7 @@
     private string branch = "";
     private string repo = "";
     private string path = "";
+    private string claudeName = "";
     private string? loadedName;
     private string? loadedKey;
     private bool saving;
@@ -89,14 +98,19 @@
     private bool BranchChanged => branch.Trim().Length > 0 && branch.Trim() != (Job.Branch ?? "");
     private bool RepoChanged => repo.Trim().Length > 0 && repo.Trim() != (Job.Repo ?? "");
     private bool PathChanged => path.Trim().Length > 0 && path.Trim() != (Job.Path ?? "");
-    private bool HasChanges => NameChanged || BranchChanged || RepoChanged || PathChanged;
+    // Blank means "the job name"; only a job that has its own Claude name can be cleared.
+    private bool HasOwnClaudeName => Job.SessionName != Job.Job;
+    private bool ClaudeNameCleared => claudeName.Trim().Length == 0 && HasOwnClaudeName;
+    private bool ClaudeNameChanged => ClaudeNameCleared || (claudeName.Trim().Length > 0 && claudeName.Trim() != Job.SessionName);
+    private bool HasChanges => NameChanged || BranchChanged || RepoChanged || PathChanged || ClaudeNameChanged;
+    private string NameAfterSave => NameChanged ? name.Trim() : Job.Job;
 
-    // The folder, branch and name are what a running claude session is working in.
-    private bool Blocked => (NameChanged || BranchChanged || PathChanged) && Sessions.IsRunning(Job.Job);
+    // The folder, branch and names are what a running claude session was started with.
+    private bool Blocked => (NameChanged || BranchChanged || PathChanged || ClaudeNameChanged) && Sessions.IsRunning(Job.Job);
 
     protected override void OnParametersSet()
     {
-        var key = $"{Job.Job}|{Job.Branch}|{Job.Repo}|{Job.Path}";
+        var key = $"{Job.Job}|{Job.Branch}|{Job.Repo}|{Job.Path}|{Job.SessionName}";
         // a different job always reloads; a refresh of the same job must not wipe what the user is typing
         if (Job.Job != loadedName || (key != loadedKey && !HasChanges))
         {
@@ -112,6 +126,7 @@
         branch = Job.Branch ?? "";
         repo = Job.Repo ?? "";
         path = Job.Path ?? "";
+        claudeName = HasOwnClaudeName ? Job.SessionName : "";
     }
 
     private async Task SaveAsync()
@@ -126,7 +141,9 @@
                 NameChanged ? name : null,
                 BranchChanged ? branch : null,
                 RepoChanged ? repo : null,
-                PathChanged ? path : null);
+                PathChanged ? path : null,
+                ClaudeNameChanged && !ClaudeNameCleared ? claudeName : null,
+                ClaudeNameCleared);
             result = r;
             // refresh even on failure: an earlier step (e.g. the repo) may already have been applied
             await Store.RefreshAsync();

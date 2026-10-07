@@ -24,6 +24,8 @@ param(
   [ValidateSet('', 'wsl', 'windows')][string]$Target = '',
   [string]$NewName,
   [string]$NewPath,
+  [string]$ClaudeName,
+  [switch]$ClearClaudeName,
   [string]$Path,
   [string]$Prompt,
   [int]$TimeoutSec = 600,
@@ -111,6 +113,64 @@ function Find-RegName($envName, [string]$path, $reg) {
   foreach ($k in $reg.Keys) {
     if ($reg[$k].env -eq $envName -and ([string]$reg[$k].path).TrimEnd('\', '/') -ieq $want) { return $k }
   }
+}
+
+# ----------------------------------------------------------------------------------------------
+# Claude session names (claude-names.json)
+# ----------------------------------------------------------------------------------------------
+# claude is started with `--name <name>`; other Claude sessions on this PC address it by that name (cross-session
+# messaging). A job without an entry uses its job name, so the file lists only the jobs given another name:
+#   { "job1": "api-worker" }
+$NamesPath = Join-Path $DataDir 'claude-names.json'
+$ClaudeNamePattern = '^[A-Za-z0-9_.-]{1,64}$'
+
+function Get-ClaudeNames {
+  $h = @{}
+  if (Test-Path -LiteralPath $NamesPath) {
+    $raw = Get-Content -LiteralPath $NamesPath -Raw
+    if ($raw -and $raw.Trim()) {
+      foreach ($p in ($raw | ConvertFrom-Json).PSObject.Properties) { if ($p.Value) { $h[$p.Name] = [string]$p.Value } }
+    }
+  }
+  $h
+}
+
+function Save-ClaudeNames($h) {
+  if ($h.Count -eq 0) {
+    if (Test-Path -LiteralPath $NamesPath) { [IO.File]::Delete($NamesPath) }
+    return
+  }
+  $o = [ordered]@{}
+  foreach ($k in ($h.Keys | Sort-Object)) { $o[$k] = $h[$k] }
+  $o | ConvertTo-Json | Set-Content -LiteralPath $NamesPath -Encoding UTF8
+}
+
+# The name the job's claude session runs under.
+function Get-ClaudeName($job) {
+  $h = Get-ClaudeNames
+  if ($h.ContainsKey($job)) { $h[$job] } else { $job }
+}
+
+# Sessions are addressed by name, so no two jobs may share one (compared case-insensitively).
+# -IsJobName: the job runs under its own job name, which is already unique among jobs, so only the names in
+# claude-names.json can clash and the (WSL-dependent) job list is not needed.
+function Assert-ClaudeNameFree($cfg, [string]$job, [string]$claudeName, [switch]$IsJobName) {
+  Assert-Safe $claudeName $ClaudeNamePattern 'Claude name (letters, digits, _ . -, up to 64)'
+  $names = Get-ClaudeNames
+  foreach ($k in $names.Keys) {
+    if ($k -ine $job -and $names[$k] -ieq $claudeName) { throw "the Claude name '$claudeName' is already used by the job '$k'" }
+  }
+  if ($IsJobName) { return }
+  foreach ($j in @(Get-JobList $cfg | ForEach-Object { $_.Job })) {
+    if ($j -ine $job -and -not $names.ContainsKey($j) -and $j -ieq $claudeName) { throw "the Claude name '$claudeName' is already used by the job '$j'" }
+  }
+}
+
+function Set-ClaudeName([string]$job, [string]$claudeName) {
+  $h = Get-ClaudeNames
+  if ($h.ContainsKey($job)) { $h.Remove($job) }
+  if ($claudeName -and $claudeName -cne $job) { $h[$job] = $claudeName }
+  Save-ClaudeNames $h
 }
 
 # ----------------------------------------------------------------------------------------------
@@ -237,10 +297,16 @@ function Cmd-Add($cfg) {
 
   # names are unique across both environments and across jobs renamed/moved by `edit`
   if ((Get-Registry).ContainsKey($Name)) { throw "a job named '$Name' already exists; job names are shared across environments" }
+  # a job without its own Claude name runs under its job name, which must not be another job's Claude name
+  Assert-ClaudeNameFree $cfg $Name $(if ($ClaudeName) { $ClaudeName } else { $Name }) -IsJobName:(-not $ClaudeName)
 
-  if ($Path) { Add-Existing $cfg; return }
-  if ($Target -eq 'windows') { Win-Add $cfg $br $repoUrl; return }
+  if ($Path) { Add-Existing $cfg }
+  elseif ($Target -eq 'windows') { Win-Add $cfg $br $repoUrl }
+  else { Add-Wsl $cfg $br $repoUrl }
+  if ($ClaudeName) { Set-ClaudeName $Name $ClaudeName }
+}
 
+function Add-Wsl($cfg, $br, $repoUrl) {
   if (Test-WinJob $cfg $Name) { throw "a Windows job named '$Name' already exists; job names are shared across environments" }
   Assert-FolderFree $cfg 'wsl' "$($cfg.jobsRoot)/$Name"
   $repo = $repoUrl -replace "'", "'\''"
@@ -426,6 +492,10 @@ for x in $EXTRA; do emit "$x"; done
     if ($jobs.Count -eq 0) { throw }
     [Console]::Error.WriteLine("warning: could not list WSL jobs: $($_.Exception.Message)")
   }
+  $names = Get-ClaudeNames
+  foreach ($j in $jobs) {
+    $j | Add-Member -NotePropertyName ClaudeName -NotePropertyValue $(if ($names.ContainsKey($j.Job)) { $names[$j.Job] } else { $j.Job })
+  }
   @($jobs | Sort-Object Job)
 }
 
@@ -438,12 +508,15 @@ function Cmd-List($cfg) {
 
 function Start-Job-Tab($cfg, $name) {
   Assert-Safe $name '^[A-Za-z0-9_-]+$' 'job name'
+  # the session name is how other Claude sessions address this one; it is also the tab title
+  $cn = Get-ClaudeName $name
+  Assert-Safe $cn $ClaudeNamePattern 'Claude name'
   if ((Get-JobTarget $cfg $name) -eq 'windows') {
     $dir = Win-Dir $cfg $name
-    $cmd = Get-WinClaude $cfg
+    $cmd = (Get-WinClaude $cfg) + " --name $cn"
     if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
       # wt treats ';' as its own command separator
-      Start-Process wt.exe -ArgumentList @('-w', '0', 'new-tab', '--title', $name, '-d', $dir,
+      Start-Process wt.exe -ArgumentList @('-w', '0', 'new-tab', '--title', $cn, '-d', $dir,
         'powershell.exe', '-NoLogo', '-NoExit', '-Command', ($cmd -replace ';', '\;'))
     } else {
       Start-Process powershell.exe -WorkingDirectory $dir -ArgumentList @('-NoLogo', '-NoExit', '-Command', $cmd)
@@ -451,9 +524,9 @@ function Start-Job-Tab($cfg, $name) {
     return
   }
   $dir = Wsl-Dir $cfg $name
-  $wslArgs = @(Wsl-Args $cfg) + @('--cd', $dir, '--', 'bash', '-lc', $cfg.claudeCmd)
+  $wslArgs = @(Wsl-Args $cfg) + @('--cd', $dir, '--', 'bash', '-lc', "$($cfg.claudeCmd) --name $cn")
   if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
-    Start-Process wt.exe -ArgumentList (@('-w', '0', 'new-tab', '--title', $name, 'wsl.exe') + $wslArgs)
+    Start-Process wt.exe -ArgumentList (@('-w', '0', 'new-tab', '--title', $cn, 'wsl.exe') + $wslArgs)
   } else {
     Start-Process wsl.exe -ArgumentList $wslArgs
   }
@@ -827,10 +900,13 @@ function Cmd-Doctor($cfg) {
 #   -Branch   switch to that branch (existing, else created from the current commit); needs a clean working tree
 #   -NewPath  move the job folder (the Claude history for the folder moves along, so resume/token stats keep working)
 #   -NewName  rename the job. Only the label changes: the folder and the Claude history stay where they are.
+#   -ClaudeName / -ClearClaudeName  the name the claude session runs under (cleared = the job name); used from the next start
 function Cmd-Edit($cfg) {
   Assert-Safe $Name '^[A-Za-z0-9_-]+$' 'job name'
   if ($NewName -ieq $Name) { $script:NewName = '' }
-  if (-not ($NewName -or $Branch -or $Repo -or $NewPath)) { throw 'nothing to change: give -NewName, -Branch, -Repo and/or -NewPath' }
+  if (-not ($NewName -or $Branch -or $Repo -or $NewPath -or $ClaudeName -or $ClearClaudeName)) {
+    throw 'nothing to change: give -NewName, -Branch, -Repo, -NewPath, -ClaudeName and/or -ClearClaudeName'
+  }
   $isWin = (Get-JobTarget $cfg $Name) -eq 'windows'
   $envName = if ($isWin) { 'windows' } else { 'wsl' }
 
@@ -848,14 +924,27 @@ function Cmd-Edit($cfg) {
     else { Assert-Safe $NewPath '^(~|/)[A-Za-z0-9._/@+~-]*$' 'folder (an absolute WSL path such as /home/me/work/job1, no spaces)' }
   }
 
-  $final = if ($isWin) { Edit-Windows $cfg } else { Edit-Wsl $cfg }
+  $finalName = if ($NewName) { $NewName } else { $Name }
+  $names = Get-ClaudeNames
+  $claude = if ($ClaudeName) { $ClaudeName } elseif ($ClearClaudeName) { '' } elseif ($names.ContainsKey($Name)) { $names[$Name] } else { '' }
+  # without its own Claude name the job runs under its (new) job name, which must be free as well
+  if ($ClaudeName -or $ClearClaudeName -or $NewName) { Assert-ClaudeNameFree $cfg $Name $(if ($claude) { $claude } else { $finalName }) -IsJobName:(-not $claude) }
+
+  if ($NewName -or $Branch -or $Repo -or $NewPath) {
+    $final = if ($isWin) { Edit-Windows $cfg } else { Edit-Wsl $cfg }
+  }
 
   # jobs.json only needs an entry when the name or the folder is no longer the default layout
   if ($NewName -or $NewPath) {
     $reg = Get-Registry
     if ($reg.ContainsKey($Name)) { $reg.Remove($Name) }
-    $reg[$(if ($NewName) { $NewName } else { $Name })] = [pscustomobject]@{ env = $envName; path = $final }
+    $reg[$finalName] = [pscustomobject]@{ env = $envName; path = $final }
     Save-Registry $reg
+  }
+  if ($NewName -and $names.ContainsKey($Name)) { $names.Remove($Name); Save-ClaudeNames $names }
+  if ($NewName -or $ClaudeName -or $ClearClaudeName) {
+    Set-ClaudeName $finalName $claude
+    if ($ClaudeName -or $ClearClaudeName) { Write-Host "Claude name -> $(Get-ClaudeName $finalName)" }
   }
   Write-Host ("Updated $Name" + $(if ($NewName) { " (now $NewName)" } else { '' }))
 }
@@ -983,9 +1072,12 @@ esac
   else { Write-Host "Removed $Name" }
 }
 
+# Forgets what jobs.json and claude-names.json record about a removed job.
 function Remove-RegEntry($name) {
   $reg = Get-Registry
   if ($reg.ContainsKey($name)) { $reg.Remove($name); Save-Registry $reg }
+  $names = Get-ClaudeNames
+  if ($names.ContainsKey($name)) { $names.Remove($name); Save-ClaudeNames $names }
 }
 
 function Win-Remove($cfg) {
@@ -1031,13 +1123,14 @@ switch ($Command) {
 AgentLegion commands:
   init -Repo <url> [-Distro <name>] [-Root ~/agentjobs] [-WindowsRoot <dir>]   write legion.json
        [-ClaudeCmd <cmd>] [-WindowsClaudeCmd <cmd>]   claude command/path for WSL / Windows jobs
-  add <job> [-Branch <name>] [-Repo <url>] [-Target wsl|windows]
+  add <job> [-Branch <name>] [-Repo <url>] [-Target wsl|windows] [-ClaudeName <name>]
                                 clone the repo to <root>/<job> and check out agent/<job>
-  add <job> -Path <folder> [-Branch <name>] [-Target wsl|windows]
+                                (-ClaudeName = the session name other Claude sessions use; default the job name)
+  add <job> -Path <folder> [-Branch <name>] [-Target wsl|windows] [-ClaudeName <name>]
                                 use an existing clone: no clone, just git pull there
                                 (-Target windows = a native Windows PowerShell job, default root %USERPROFILE%\agentjobs)
   list | status [-Json]         show jobs (both environments), branches, uncommitted changes
-  start <job>                   open Windows Terminal tab running claude in that job
+  start <job>                   open Windows Terminal tab running claude --name <Claude name> in that job
   start-all                     open a tab for every job
   run <job> -Prompt "<text>" [-TimeoutSec 600]   non-interactive claude -p in that job
   diff <job> [-Base main]       commits/changes of the job branch vs base
@@ -1047,8 +1140,9 @@ AgentLegion commands:
   last-session <job> [-Json]    id of the job's most recent Claude conversation (for claude --resume)
   code <job>                    open the job folder in the editor (code .; WSL jobs via Remote-WSL; "codeCmd" in legion.json)
   shell <job>                   open a plain terminal (WSL shell or PowerShell) in the job folder, not claude
-  edit <job> [-NewName n] [-Branch b] [-Repo url] [-NewPath dir]
-                                rename the job (label only), switch branch, change origin, or move the job folder
+  edit <job> [-NewName n] [-Branch b] [-Repo url] [-NewPath dir] [-ClaudeName c | -ClearClaudeName]
+                                rename the job (label only), switch branch, change origin, move the job folder,
+                                or set the Claude session name (used from the next start)
   doctor [-Target windows]      check WSL / Windows, git, claude, repo access, claude auth
   remove <job>                  delete job folder (no git status check)
 '@ | Write-Host

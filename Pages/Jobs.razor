@@ -46,6 +46,12 @@ else
                     <label class="form-label small mb-1" for="newRepo">Repo (optional)</label>
                     <input id="newRepo" class="form-control" @bind="newRepo" disabled="@UsePath" placeholder="@(UsePath ? "기존 폴더의 repo 사용" : "기본 repo 사용")" />
                 </div>
+                <div class="col-12 col-md-2">
+                    <label class="form-label small mb-1" for="newClaude">Claude name (optional)</label>
+                    <input id="newClaude" class="form-control" @bind="newClaudeName"
+                           title="claude --name 으로 쓰는 세션 이름. 다른 Claude 세션이 이 이름으로 메시지를 보냅니다."
+                           placeholder="@(string.IsNullOrWhiteSpace(newName) ? "job 이름" : newName.Trim())" />
+                </div>
                 <div class="col-12 col-md-3">
                     <label class="form-label small mb-1" for="newPath">Path (optional)</label>
                     <input id="newPath" class="form-control" @bind="newPath" @bind:event="oninput"
@@ -78,7 +84,7 @@ else
         <div class="table-responsive">
             <table class="table align-middle">
                 <thead>
-                    <tr><th>Job</th><th>Env</th><th>Branch</th><th>Changes</th><th>Session</th><th class="text-end">Actions</th></tr>
+                    <tr><th>Job</th><th>Claude name</th><th>Env</th><th>Branch</th><th>Changes</th><th>Session</th><th class="text-end">Actions</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var j in Store.Jobs)
@@ -88,6 +94,7 @@ else
                         var live = state != SessionState.Stopped;
                         <tr>
                             <td><a href="@($"jobs/{j.Job}")">@j.Job</a></td>
+                            <td><code title="다른 Claude 세션에서 이 이름으로 메시지를 보냅니다">@j.SessionName</code></td>
                             <td><span class="badge @(j.IsWindows ? "bg-info text-dark" : "bg-light text-dark border")" title="@(j.Path)">@(j.IsWindows ? "PowerShell" : "WSL")</span></td>
                             <td><code>@j.Branch</code></td>
                             <td>
@@ -224,6 +231,7 @@ else
     private string? newBranch;
     private string? newRepo;
     private string? newPath;
+    private string? newClaudeName;
     private bool UsePath => !string.IsNullOrWhiteSpace(newPath);
 
     protected override async Task OnInitializedAsync()
@@ -275,11 +283,11 @@ else
     private async Task AddJobAsync()
     {
         var name = newName.Trim();
-        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath));
+        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath, newClaudeName));
         if (result is { Ok: true })
         {
             newName = "";
-            newBranch = newRepo = newPath = null;
+            newBranch = newRepo = newPath = newClaudeName = null;
             await RefreshAsync();
         }
     }

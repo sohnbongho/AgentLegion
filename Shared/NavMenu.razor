@@ -31,7 +31,7 @@
             {
                 var state = Sessions.GetState(job.Job);
                 <div class="nav-item">
-                    <NavLink class="nav-link" href="@($"jobs/{job.Job}")" title="@($"{job.Branch} · {state.Label()}")">
+                    <NavLink class="nav-link" href="@($"jobs/{job.Job}")" title="@($"Claude: {job.SessionName} · {job.Branch} · {state.Label()}")">
                         <span class="job-dot @state.Css()" aria-hidden="true"></span>
                         <span class="nav-label">@job.Job</span>
                         @if (job.IsWindows)

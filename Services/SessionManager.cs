@@ -22,6 +22,10 @@ namespace AgentLegion.Services
         private readonly Dictionary<string, string?> _resumed = new();
         private static readonly Regex SessionId = new("^[0-9a-fA-F-]{8,64}$", RegexOptions.Compiled);
 
+        // job -> the name its current session was started with (`claude --name`); the same rule as legion.ps1
+        private readonly Dictionary<string, string> _names = new();
+        private static readonly Regex ClaudeName = new("^[A-Za-z0-9_.-]{1,64}$", RegexOptions.Compiled);
+
         private readonly Dictionary<string, SessionState> _lastStates = new();
         private readonly Timer _poll;
 
@@ -93,6 +97,20 @@ namespace AgentLegion.Services
             lock (_gate) return _resumed.GetValueOrDefault(job);
         }
 
+        /// <summary>The name the job's running session was started with, or null when it is not running.</summary>
+        public string? SessionName(string job)
+        {
+            lock (_gate) return _sessions.TryGetValue(job, out var s) && s.IsRunning ? _names.GetValueOrDefault(job) : null;
+        }
+
+        // Other Claude sessions on this PC address the session by this name (cross-session messaging). It goes on the
+        // command line, so validate it.
+        private static string NameArg(string name)
+        {
+            if (!ClaudeName.IsMatch(name)) throw new InvalidOperationException($"Invalid Claude name: '{name}'");
+            return $" --name {name}";
+        }
+
         // `claude --resume <id>` continues that conversation; the id comes from a file name on disk, so validate it.
         private static string ResumeArg(string? id)
         {
@@ -113,10 +131,12 @@ namespace AgentLegion.Services
                 if (_sessions.TryGetValue(job, out var existing) && existing.IsRunning) return existing;
                 existing?.Dispose();
                 var cfg = _legion.LoadConfig() ?? throw new InvalidOperationException("Not configured. Set up Settings first.");
-                var (commandLine, workingDirectory) = BuildLaunch(job, cfg, resumeId, _legion.GetRegisteredJob(job));
+                var name = _legion.GetClaudeName(job);
+                var (commandLine, workingDirectory) = BuildLaunch(job, cfg, resumeId, name, _legion.GetRegisteredJob(job));
                 session = PtySession.Start(commandLine, cols, rows, cfg.StateDetection, workingDirectory);
                 _sessions[job] = session;
                 _resumed[job] = resumeId;
+                _names[job] = name;
             }
             session.Exited += () => Changed?.Invoke();
             Changed?.Invoke();
@@ -129,6 +149,7 @@ namespace AgentLegion.Services
             lock (_gate)
             {
                 _resumed.Remove(job);
+                _names.Remove(job);
                 if (!_sessions.Remove(job, out s)) return;
             }
             s.Dispose();
@@ -141,7 +162,7 @@ namespace AgentLegion.Services
         /// anything else is a WSL job in the WSL jobs root.
         /// </summary>
         private static (string CommandLine, string? WorkingDirectory) BuildLaunch(
-            string job, LegionConfig cfg, string? resumeId, RegisteredJob? registered)
+            string job, LegionConfig cfg, string? resumeId, string claudeName, RegisteredJob? registered)
         {
             if (!JobName.IsMatch(job)) throw new ArgumentException($"Invalid job name: '{job}'");
 
@@ -152,15 +173,15 @@ namespace AgentLegion.Services
                 if (!Directory.Exists(winDir)) throw new InvalidOperationException($"The job folder was not found: {winDir}");
                 // Native Windows: PowerShell runs claude in the job folder; the session ends when claude exits.
                 // The command comes from the local config file (like claudeCmd for WSL).
-                var cmd = (cfg.WindowsClaudeCmd + ResumeArg(resumeId)).Replace("\"", "\\\"");
+                var cmd = (cfg.WindowsClaudeCmd + ResumeArg(resumeId) + NameArg(claudeName)).Replace("\"", "\\\"");
                 return ($"powershell.exe -NoLogo -Command \"{cmd}\"", winDir);
             }
 
             var wslDir = registered is { Env: "wsl" } ? registered.Path : null;
-            return (BuildWslCommandLine(job, cfg, resumeId, wslDir), null);
+            return (BuildWslCommandLine(job, cfg, resumeId, claudeName, wslDir), null);
         }
 
-        private static string BuildWslCommandLine(string job, LegionConfig cfg, string? resumeId, string? folder)
+        private static string BuildWslCommandLine(string job, LegionConfig cfg, string? resumeId, string claudeName, string? folder)
         {
             if (!RootPath.IsMatch(cfg.JobsRoot)) throw new InvalidOperationException($"Invalid jobs root: '{cfg.JobsRoot}'");
             folder ??= $"{cfg.JobsRoot}/{job}";
@@ -174,7 +195,7 @@ namespace AgentLegion.Services
             }
 
             // claudeCmd comes from the local config file and runs inside a login shell, like `legion.ps1 start`.
-            return $"wsl.exe {distro}--cd {folder} -- bash -lc \"{(cfg.ClaudeCmd + ResumeArg(resumeId)).Replace("\"", "\\\"")}\"";
+            return $"wsl.exe {distro}--cd {folder} -- bash -lc \"{(cfg.ClaudeCmd + ResumeArg(resumeId) + NameArg(claudeName)).Replace("\"", "\\\"")}\"";
         }
 
         public void Dispose()

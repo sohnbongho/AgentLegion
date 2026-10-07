@@ -7,9 +7,14 @@ using System.Text.RegularExpressions;
 namespace AgentLegion.Services
 {
     /// <param name="Repo">The job's origin URL (credentials already stripped), empty if it has no remote.</param>
-    public record JobInfo(string Job, string Branch, int Changes, string? Repo = null, string Env = "wsl", string? Path = null)
+    /// <param name="ClaudeName">The name claude runs under (`claude --name`); other Claude sessions address it by this name.</param>
+    public record JobInfo(string Job, string Branch, int Changes, string? Repo = null, string Env = "wsl", string? Path = null,
+        string? ClaudeName = null)
     {
         public bool IsWindows => Env.Equals("windows", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>The Claude session name; a job without its own runs under its job name.</summary>
+        public string SessionName => string.IsNullOrWhiteSpace(ClaudeName) ? Job : ClaudeName;
     }
 
     public record JobsResult(IReadOnlyList<JobInfo> Jobs, string? Error);
@@ -202,10 +207,13 @@ namespace AgentLegion.Services
 
         /// <param name="windows">true = a native Windows PowerShell job (e.g. Unity), false = a WSL job.</param>
         /// <param name="path">An existing clone to use: nothing is cloned, it is only pulled. Blank = clone into the jobs root.</param>
-        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false, string? path = null)
+        /// <param name="claudeName">The Claude session name; blank = the job name.</param>
+        public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false, string? path = null,
+            string? claudeName = null)
         {
             var args = new List<string> { "add", job.Trim() };
             if (!string.IsNullOrWhiteSpace(branch)) args.AddRange(new[] { "-Branch", branch.Trim() });
+            if (!string.IsNullOrWhiteSpace(claudeName)) args.AddRange(new[] { "-ClaudeName", claudeName.Trim() });
             if (!string.IsNullOrWhiteSpace(path)) args.AddRange(new[] { "-Path", path.Trim() });
             else if (!string.IsNullOrWhiteSpace(repo)) args.AddRange(new[] { "-Repo", repo.Trim() });
             if (windows) args.AddRange(new[] { "-Target", "windows" });
@@ -319,8 +327,10 @@ namespace AgentLegion.Services
 
         /// <summary>
         /// Edits a job; null/blank arguments are left unchanged. Name only relabels the job, Path moves its folder.
+        /// <paramref name="clearClaudeName"/> drops the job's own Claude name so it runs under its job name again.
         /// </summary>
-        public Task<CommandResult> EditJobAsync(string job, string? newName, string? branch, string? repo, string? newPath)
+        public Task<CommandResult> EditJobAsync(string job, string? newName, string? branch, string? repo, string? newPath,
+            string? claudeName = null, bool clearClaudeName = false)
         {
             var args = new List<string> { "edit", job };
             void Add(string flag, string? value)
@@ -331,7 +341,30 @@ namespace AgentLegion.Services
             Add("-Branch", branch);
             Add("-Repo", repo);
             Add("-NewPath", newPath);
+            Add("-ClaudeName", claudeName);
+            if (clearClaudeName && string.IsNullOrWhiteSpace(claudeName)) args.Add("-ClearClaudeName");
             return RunAsync(MoveTimeout, args.ToArray());
+        }
+
+        /// <summary>
+        /// The name the job's claude session runs under (claude-names.json, written by legion.ps1), or the job name.
+        /// </summary>
+        public string GetClaudeName(string job)
+        {
+            try
+            {
+                var file = Path.Combine(DataDir, "claude-names.json");
+                if (!File.Exists(file)) return job;
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                foreach (var p in doc.RootElement.EnumerateObject())
+                {
+                    if (string.Equals(p.Name, job, StringComparison.OrdinalIgnoreCase)
+                        && p.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.Value.GetString()))
+                        return p.Value.GetString()!;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException or UnauthorizedAccessException) { }
+            return job;
         }
 
         /// <summary>
