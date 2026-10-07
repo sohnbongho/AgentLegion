@@ -100,6 +100,15 @@ job 화면 터미널 위의 줄과 Jobs 목록의 **Server** 열에 있습니다
 - 출력은 아래 패널(Jobs 목록에서는 표 아래)에 실시간으로 나오고, 다른 화면에 갔다 와도 이어서 보입니다. 한 job에서는 한 번에 하나만, Deploy / Run / Stop은 서버를 공유하므로 모든 job을 통틀어 하나씩만 실행됩니다.
 - 스크립트 폴더·tmux 세션 이름·빌드 명령은 Settings에서 바꿉니다. job별 배포 경로는 `deploy-targets.json`에 저장되고, Edit로 이름을 바꿔도 따라갑니다.
 
+### Logs (로그 분석)
+왼쪽 메뉴 **Tools → Logs**. Files와 같은 트리에서 폴더를 열고(처음엔 Settings의 *기본 로그 폴더*, 기본 `~/wind/data_local/logs`) 로그 파일을 클릭하면 마지막 500줄(`tail -n 500`)을 보여 줍니다. 수십 MB 로그도 끝부분만 읽으므로 바로 열립니다. 열어 둔 폴더·파일·인코딩·명령 기록은 `logs.json`에 저장되어 다음에 그대로 열리며, Files 탭과는 따로 기억합니다. Settings에서 기본 로그 폴더를 바꾸면 다음에 Logs 탭을 열 때 그 폴더가 열리고, 트리의 🏠 버튼도 그 폴더로 갑니다.
+
+- **명령 칸**: `grep`, `sed`, `head`, `tail -f`, `awk`, `wc`, 파이프(`|`) 등 셸 명령을 그대로 씁니다. 선택한 파일은 **첫 명령 뒤에 자동으로 붙습니다**(`grep -n 실패 | tail -n 50` → `grep -n 실패 "$F" | tail -n 50`). 다른 위치에 넣으려면 `$F`를 직접 쓰고, *선택 파일에 실행*을 끄면 파일을 붙이지 않고 폴더에서 그대로 실행합니다(예: `grep -l ERROR log.*`). Enter로 실행하며, 이전 명령은 칸의 자동 완성으로 다시 고릅니다.
+- **빠른 버튼**: 끝 500줄, `tail -f`(실시간), 처음 200줄, `! 경고`(레벨 표시가 `!`인 줄), 줄 수, grep…/sed 범위…(칸에 채워 주기만 함).
+- **tail -f**: 새 줄이 바로 나타납니다. **중지**를 누르거나, 다른 명령·파일로 바꾸거나, 다른 탭으로 가면 WSL 안의 프로세스(파이프 전체)가 함께 종료됩니다. `tail -f | grep 패턴`도 줄 단위로 바로 나옵니다(grep·sed를 line-buffered로 실행).
+- **인코딩**: *자동* / EUC-KR / UTF-8. 자동은 파일 앞뒤를 보고 UTF-8이 아니면 EUC-KR로 정합니다(ASCII만 있으면 EUC-KR). EUC-KR이면 **명령 자체를 CP949로 바꿔 실행**하므로 `grep 캐릭터`처럼 한글 패턴이 EUC-KR 로그에서도 맞고, 출력은 CP949로 읽어 표시합니다. 파일을 변환하지 않으므로 큰 로그의 `tail`도 빠릅니다. 인코딩을 바꾸면 마지막 명령을 다시 실행합니다.
+- 출력은 최근 5,000줄까지 보관합니다(넘으면 앞부분 생략 표시). grep이 아무것도 찾지 못하면(exit 1) `일치 없음`으로 표시합니다.
+
 ### 터미널 복사/붙여넣기
 - 마우스로 선택 → `Ctrl+C` 복사(선택이 없으면 평소처럼 **중단 신호**). `Ctrl+Shift+C`는 항상 복사만 합니다.
 - 붙여넣기 `Ctrl+V` / `Ctrl+Shift+V`.
@@ -117,6 +126,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `jobs.json` | 이름/폴더가 기본 규칙과 다른 job만 기록(`edit`이 관리) |
 | `claude-names.json` | job 이름과 다른 Claude 이름을 가진 job만 기록(`{ "job1": "api-worker" }`, `add`/`edit`이 관리) |
 | `deploy-targets.json` | 기본 배포 경로와 다른 경로를 쓰는 job만 기록(`{ "job1": "~/wind/data_local" }`, job 화면의 배포 경로 칸이 관리) |
+| `files.json` / `logs.json` | Files / Logs 탭에서 마지막으로 연 폴더·파일(Logs는 인코딩·명령 기록·줄바꿈도) |
 | `logs/session-state.log` | 세션 상태 전환 기록(상태 표시가 이상할 때 원인 확인용) |
 
 `legion.json` 키:
@@ -136,6 +146,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `buildCmd` | `make` | Build가 job 폴더에서 실행하는 명령. Settings에서 지정 |
 | `serverScriptDir` | `~/script/local` | `stop_wind_server.sh` / `run_gameserver.sh`가 있는 폴더. Settings에서 지정 |
 | `serverSession` | `wind` | 서버 스크립트가 쓰는 tmux 세션 이름(상태 확인·중복 실행 검사용). Settings에서 지정 |
+| `logRoot` | `~/wind/data_local/logs` | Logs 탭의 기본 폴더(🏠 버튼). Settings에서 지정 |
 
 ## CLI (`legion.ps1`)
 웹 UI가 내부에서 쓰는 스크립트이며 직접 실행할 수도 있습니다. `-Target windows`를 주지 않는 명령은 job이 있는 환경을 자동으로 찾습니다.

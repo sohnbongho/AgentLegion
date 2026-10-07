@@ -1,0 +1,250 @@
+@inject LogBrowserState State
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* A log file's last lines, and any shell command run on it: grep, sed, head, tail -f, awk, pipes. *@
+<div class="lv-header">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        @if (State.SelectedPath is { } path)
+        {
+            <code class="lv-path" title="@path">@path</code>
+            @if (State.SelectedInfo is { } info)
+            {
+                <span class="small text-muted text-nowrap">@FormatBytes(info.Length) · @info.LastWriteTime.ToString("MM-dd HH:mm:ss")</span>
+            }
+        }
+        else
+        {
+            <span class="text-muted small">좌측에서 로그 파일을 선택하세요. 선택하지 않으면 명령은 폴더(<code>@State.Root?.LinuxPath</code>)에서 실행됩니다.</span>
+        }
+        <div class="d-flex align-items-center gap-2 ms-auto">
+            <select class="form-select form-select-sm lv-enc" value="@State.Encoding" @onchange="OnEncodingChanged"
+                    title="로그 파일의 인코딩. 바꾸면 마지막 명령을 다시 실행합니다." aria-label="인코딩">
+                <option value="@LogEncoding.Auto">자동 (@AutoLabel)</option>
+                <option value="@LogEncoding.EucKr">EUC-KR</option>
+                <option value="@LogEncoding.Utf8">UTF-8</option>
+            </select>
+            @if (State.SelectedPath is not null)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" @onclick="State.RevealSelectedInExplorer"
+                        title="이 파일이 있는 폴더를 Windows 탐색기로 엽니다">
+                    <span class="oi oi-folder" aria-hidden="true"></span>
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (State.ExplorerError is not null)
+    {
+        <div class="alert alert-danger py-1 small my-1" role="alert">@State.ExplorerError</div>
+    }
+
+    <div class="input-group input-group-sm mt-2">
+        <span class="input-group-text lv-prompt">$</span>
+        <input @ref="cmdInput" class="form-control lv-cmd" list="lv-history" spellcheck="false" autocomplete="off"
+               value="@State.Command" @oninput="e => State.Command = e.Value?.ToString() ?? string.Empty" @onkeydown="OnCommandKey"
+               placeholder="grep -n ERROR | tail -n 100" aria-label="명령" />
+        @if (Run is { Running: true })
+        {
+            <button class="btn btn-danger" @onclick="State.StopAsync" disabled="@Run.Stopped">
+                <span class="oi oi-media-stop" aria-hidden="true"></span> 중지
+            </button>
+        }
+        <button class="btn btn-primary" @onclick="RunCommand" disabled="@(string.IsNullOrWhiteSpace(State.Command))">
+            <span class="oi oi-media-play" aria-hidden="true"></span> 실행
+        </button>
+    </div>
+    <datalist id="lv-history">
+        @foreach (var h in State.History)
+        {
+            <option value="@h"></option>
+        }
+    </datalist>
+
+    <div class="d-flex align-items-center gap-1 flex-wrap mt-2">
+        @foreach (var q in Quick)
+        {
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0" title="@q.Command" @onclick="() => QuickAsync(q)">@q.Label</button>
+        }
+        <div class="form-check form-check-inline small mb-0 ms-auto">
+            <input class="form-check-input" type="checkbox" id="lvUseFile" checked="@State.UseFile" disabled="@(State.SelectedPath is null)"
+                   @onchange="e => State.UseFile = e.Value is true" />
+            <label class="form-check-label" for="lvUseFile" title="끄면 파일을 붙이지 않고 폴더에서 그대로 실행합니다 (예: grep -l ERROR log.*)">선택 파일에 실행</label>
+        </div>
+        <div class="form-check form-check-inline small mb-0 me-0">
+            <input class="form-check-input" type="checkbox" id="lvWrap" checked="@State.Wrap" @onchange="e => State.SetWrap(e.Value is true)" />
+            <label class="form-check-label" for="lvWrap">줄바꿈</label>
+        </div>
+    </div>
+    <div class="small text-muted mt-1">
+        선택한 파일은 첫 명령 뒤에 붙습니다 (<code>grep -n 오류 | tail -n 50</code> → <code>grep -n 오류 "$F" | tail -n 50</code>). 위치를 직접 정하려면 <code>$F</code>를 쓰세요.
+    </div>
+
+    @if (Run is { } run)
+    {
+        <div class="d-flex align-items-center gap-2 mt-2 small">
+            <span class="badge @RunBadge(run)">@RunLabel(run)</span>
+            <code class="text-truncate lv-script" title="@($"cd {run.Dir}; F={run.File}")">$ @run.Script</code>
+            <span class="text-muted text-nowrap ms-auto">@run.Output.Lines.ToString("N0")줄 · @(run.Cp949 ? "EUC-KR" : "UTF-8") · @FormatElapsed(run.Elapsed)</span>
+            @if (!run.Running)
+            {
+                <button class="btn btn-sm btn-link py-0" @onclick="State.ClearOutput">지우기</button>
+            }
+        </div>
+    }
+</div>
+
+<pre @ref="outEl" class="lv-output @(State.Wrap ? "wrap" : "")">@if (Run is not { } r)
+{<span class="lv-note">로그 파일을 클릭하면 마지막 @(LogBrowserState.DefaultCommand.Split(' ')[^1])줄을 보여 줍니다.</span>}
+else
+{
+    @if (r.Output.Dropped > 0)
+    {<span class="lv-note">… 앞부분 @r.Output.Dropped.ToString("N0")줄 생략 (최근 @LogOutput.MaxLines.ToString("N0")줄만 표시. 범위를 좁히려면 | head 또는 | tail)
+</span>}
+    @foreach (var (id, text) in r.Output.Snapshot())
+    {<span @key="id">@text</span>}
+    @if (!r.Running && r.Output.Lines == 0)
+    {<span class="lv-note">@(r.ExitCode == 1 ? "(일치하는 줄 없음)" : "(출력 없음)")</span>}
+}</pre>
+
+@code {
+    private record QuickCommand(string Label, string Command, bool RunNow = true);
+
+    private static readonly QuickCommand[] Quick =
+    {
+        new("끝 500줄", "tail -n 500"),
+        new("tail -f", "tail -n 200 -f"),
+        new("처음 200줄", "head -n 200"),
+        new("! 경고", "grep -n -E '^[^ ]+ [^ ]+ +! '"),
+        new("줄 수", "wc -l"),
+        new("grep…", "grep -n ", RunNow: false),
+        new("sed 범위…", "sed -n '1,100p'", RunNow: false),
+    };
+
+    private ElementReference cmdInput;
+    private ElementReference outEl;
+    private LogRun? shownRun;
+    private int renderQueued;
+    private int ticking;
+    private bool disposed;
+
+    private LogRun? Run => State.Runner.Current;
+
+    private string AutoLabel => State.SelectedPath is null ? "EUC-KR" : (State.IsCp949OnAuto ? "EUC-KR" : "UTF-8");
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+        State.Runner.Output += OnOutput;
+        shownRun = Run;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (!ReferenceEquals(Run, shownRun))
+            {
+                // a new command starts at its end again, even if the last one was scrolled up
+                shownRun = Run;
+                await JS.InvokeVoidAsync("legionOps.resetFollow", outEl);
+            }
+            await JS.InvokeVoidAsync("legionOps.stickToBottom", outEl);
+        }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { /* prerender */ }
+    }
+
+    private void OnStateChanged()
+    {
+        if (!disposed) _ = InvokeAsync(StateHasChanged);
+    }
+
+    // tail -f and a big grep print hundreds of lines a second: render at most four times a second.
+    private void OnOutput()
+    {
+        if (disposed) return;
+        EnsureTicker();
+        QueueRender(TimeSpan.FromMilliseconds(250));
+    }
+
+    private void QueueRender(TimeSpan delay)
+    {
+        if (Interlocked.Exchange(ref renderQueued, 1) == 1) return;
+        _ = Task.Delay(delay).ContinueWith(_ => InvokeAsync(() =>
+        {
+            Interlocked.Exchange(ref renderQueued, 0);
+            if (!disposed) StateHasChanged();
+        }));
+    }
+
+    // Keeps the elapsed time moving while a command prints nothing (a quiet tail -f).
+    private void EnsureTicker()
+    {
+        if (Run is not { Running: true }) return;
+        if (Interlocked.Exchange(ref ticking, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            while (!disposed && Run is { Running: true })
+            {
+                await Task.Delay(1000);
+                QueueRender(TimeSpan.Zero);
+            }
+            Interlocked.Exchange(ref ticking, 0);
+            if (!disposed) QueueRender(TimeSpan.Zero);
+        });
+    }
+
+    private async Task OnCommandKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await RunCommand();
+    }
+
+    private Task RunCommand() => State.RunAsync();
+
+    private async Task QuickAsync(QuickCommand q)
+    {
+        State.Command = q.Command;
+        if (q.RunNow)
+        {
+            await State.RunAsync();
+            return;
+        }
+        try { await cmdInput.FocusAsync(); }
+        catch (JSException) { }
+        catch (JSDisconnectedException) { }
+    }
+
+    private Task OnEncodingChanged(ChangeEventArgs e) =>
+        Enum.TryParse<LogEncoding>(e.Value?.ToString(), out var enc) ? State.SetEncodingAsync(enc) : Task.CompletedTask;
+
+    // grep exits 1 when nothing matched (so does a command that printed nothing): not an error
+    private static bool NoMatch(LogRun r) =>
+        r.ExitCode == 1 && (r.Output.Lines == 0 || System.Text.RegularExpressions.Regex.IsMatch(r.Command, @"^\s*[ef]?grep\b"));
+
+    private static string RunBadge(LogRun r) =>
+        r.Running ? "bg-primary" : r.Stopped ? "bg-secondary" : r.ExitCode == 0 ? "bg-success" : NoMatch(r) ? "bg-secondary" : "bg-danger";
+
+    private static string RunLabel(LogRun r) =>
+        r.Running ? (r.Stopped ? "중지 중" : "실행 중") : r.Stopped ? "중지됨" : r.ExitCode == 0 ? "완료"
+        : NoMatch(r) ? "일치 없음" : $"exit {r.ExitCode}";
+
+    private static string FormatElapsed(TimeSpan t) =>
+        t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes}분 {t.Seconds}초" : $"{t.TotalSeconds:0.0}초";
+
+    private static string FormatBytes(long bytes)
+    {
+        const long k = 1024;
+        if (bytes < k) return $"{bytes} B";
+        if (bytes < k * k) return $"{bytes / (double)k:N1} KiB";
+        if (bytes < k * k * k) return $"{bytes / (double)(k * k):N1} MiB";
+        return $"{bytes / (double)(k * k * k):N2} GiB";
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        State.Changed -= OnStateChanged;
+        State.Runner.Output -= OnOutput;
+    }
+}

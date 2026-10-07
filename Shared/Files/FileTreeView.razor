@@ -1,9 +1,9 @@
-@inject FileBrowserState State
+@* the page cascades its own tree state (Files or Logs) *@
 @implements IDisposable
 
 <div class="tree-toolbar p-2 border-bottom">
     <div class="input-group input-group-sm mb-2">
-        <input type="text" class="form-control" placeholder="경로 예: ~/agentjobs, /etc"
+        <input type="text" class="form-control" placeholder="@Placeholder"
                value="@_path"
                @oninput="OnPathInput"
                @onkeydown="OnPathKeyDown" />
@@ -13,7 +13,7 @@
         <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="GoUp" disabled="@(State.IsBusy || State.Root?.LinuxPath == "/")" title="상위 폴더">
             <span class="oi oi-arrow-top" aria-hidden="true"></span>
         </button>
-        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="GoHome" disabled="@State.IsBusy" title="홈 폴더">
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="GoHome" disabled="@State.IsBusy" title="@($"기본 폴더: {State.DefaultRoot}")">
             <span class="oi oi-home" aria-hidden="true"></span>
         </button>
         <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="Reload" disabled="@State.IsBusy">
@@ -52,6 +52,10 @@
 </style>
 
 @code {
+    [CascadingParameter] public FileTreeState State { get; set; } = default!;
+
+    [Parameter] public string Placeholder { get; set; } = "경로 예: ~/agentjobs, /etc";
+
     private string _path = "";
     private string? _lastRoot;
 
@@ -97,7 +101,7 @@
 
     private Task ApplyPath() => OpenAsync(_path);
 
-    private Task GoHome() => OpenAsync(State.Home);
+    private Task GoHome() => State.OpenDefaultRootAsync();
 
     private Task GoUp() => OpenAsync((State.Root?.LinuxPath ?? "/") + "/..");
 

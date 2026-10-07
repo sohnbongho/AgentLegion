@@ -33,6 +33,8 @@ namespace AgentLegion
             builder.Services.AddSingleton<WslFileService>();
             builder.Services.AddSingleton<FileBrowserMemory>();
             builder.Services.AddScoped<FileBrowserState>();
+            builder.Services.AddSingleton<LogBrowserMemory>();
+            builder.Services.AddScoped<LogBrowserState>();
 
             var app = builder.Build();
 

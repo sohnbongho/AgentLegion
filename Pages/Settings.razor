@@ -140,6 +140,17 @@
     </div>
 </div>
 
+<h2 class="h5 mt-4">로그 (Logs 탭)</h2>
+
+<div class="mb-3" style="max-width: 36rem;">
+    <label class="form-label" for="logroot">기본 로그 폴더</label>
+    <input id="logroot" class="form-control font-monospace" @bind="logRoot" placeholder="@LegionConfig.DefaultLogRoot" spellcheck="false" />
+    <div class="form-text">
+        Logs 탭이 처음 여는 WSL 폴더이자 트리의 <span class="oi oi-home" aria-hidden="true"></span> 버튼이 가는 폴더.
+        바꾸면 다음에 Logs 탭을 열 때 이 폴더가 열립니다.
+    </div>
+</div>
+
 <button class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(jobsRoot))" @onclick="SaveAsync">
     @(saving ? "Saving..." : "Save")
 </button>
@@ -178,6 +189,7 @@
     private string? buildCmd = LegionConfig.DefaultBuildCmd;
     private string? serverScriptDir = LegionConfig.DefaultServerScriptDir;
     private string? serverSession = LegionConfig.DefaultServerSession;
+    private string? logRoot = LegionConfig.DefaultLogRoot;
 
     private static readonly string[] fontSuggestions =
     {
@@ -213,6 +225,7 @@
             buildCmd = cfg.BuildCmd;
             serverScriptDir = cfg.ServerScriptDir;
             serverSession = cfg.ServerSession;
+            logRoot = cfg.LogRoot;
         }
         distros = await Legion.GetDistrosAsync();
     }
@@ -228,6 +241,7 @@
                 string.IsNullOrWhiteSpace(windowsClaudeCmd) ? "claude" : windowsClaudeCmd);
             if (result.Ok) result = Legion.SaveTerminalFont(termFontFamily, termFontSize);
             if (result.Ok) result = Legion.SaveServerSettings(deployRoot, buildCmd, serverScriptDir, serverSession);
+            if (result.Ok) result = Legion.SaveLogRoot(logRoot);
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally

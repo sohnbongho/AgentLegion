@@ -1,11 +1,11 @@
-@page "/files"
-@inject FileBrowserState State
+@page "/logs"
+@inject LogBrowserState State
 @implements IDisposable
 
-<PageTitle>Files - AgentLegion</PageTitle>
+<PageTitle>Logs - AgentLegion</PageTitle>
 
 <div class="d-flex align-items-center mb-3">
-    <h1 class="me-auto mb-0">Files</h1>
+    <h1 class="me-auto mb-0">Logs</h1>
     @if (State.Distro is not null)
     {
         <span class="badge bg-success me-2">WSL</span>
@@ -16,7 +16,7 @@
 @if (State.DistroStopped)
 {
     <div class="alert alert-warning d-flex align-items-center gap-3" role="alert">
-        <span class="me-auto"><strong>@State.Distro</strong> 배포판이 중지되어 있습니다. 파일을 열면 WSL이 시작됩니다.</span>
+        <span class="me-auto"><strong>@State.Distro</strong> 배포판이 중지되어 있습니다. 로그를 열면 WSL이 시작됩니다.</span>
         <button type="button" class="btn btn-sm btn-warning" @onclick="StartAnyway">WSL 시작 후 열기</button>
     </div>
 }
@@ -36,11 +36,11 @@ else
     <div class="browser-layout">
         <div class="browser-tree">
             <CascadingValue Value="(FileTreeState)State" IsFixed="true">
-                <FileTreeView />
+                <FileTreeView Placeholder="경로 예: ~/wind/data_local/logs" />
             </CascadingValue>
         </div>
         <div class="browser-value">
-            <FilePreviewPanel />
+            <LogViewerPanel />
         </div>
     </div>
 }
@@ -55,8 +55,10 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!firstRender) return;
         // the prerender pass would list the distro a second time
-        if (firstRender && !State.IsInitialized) await State.InitializeAsync();
+        if (!State.IsInitialized) await State.InitializeAsync();
+        else await State.FollowDefaultRootAsync(); // back from Settings in the same tab
     }
 
     private Task StartAnyway() => State.InitializeAsync(startDistro: true);
@@ -70,5 +72,7 @@ else
     {
         disposed = true;
         State.Changed -= OnStateChanged;
+        // a tail -f must not keep running in WSL after the tab is left; its output stays for the return
+        _ = State.StopAsync();
     }
 }

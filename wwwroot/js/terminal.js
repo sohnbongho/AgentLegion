@@ -148,5 +148,8 @@ window.legionOps = {
             });
         }
         if (el.dataset.follow === "1") el.scrollTop = el.scrollHeight;
+    },
+    resetFollow(el) {
+        if (el) el.dataset.follow = "1";
     }
 };

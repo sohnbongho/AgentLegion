@@ -40,12 +40,14 @@ namespace AgentLegion.Services
     /// <param name="BuildCmd">Command a WSL job's Build button runs in the job folder.</param>
     /// <param name="ServerScriptDir">WSL folder holding stop_wind_server.sh and run_gameserver.sh.</param>
     /// <param name="ServerSession">tmux session the server scripts start and stop.</param>
+    /// <param name="LogRoot">Folder the Logs tab opens by default.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
         SessionStateDetection StateDetection = SessionStateDetection.Title,
         string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true,
         string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize,
         string DeployRoot = LegionConfig.DefaultDeployRoot, string BuildCmd = LegionConfig.DefaultBuildCmd,
-        string ServerScriptDir = LegionConfig.DefaultServerScriptDir, string ServerSession = LegionConfig.DefaultServerSession)
+        string ServerScriptDir = LegionConfig.DefaultServerScriptDir, string ServerSession = LegionConfig.DefaultServerSession,
+        string LogRoot = LegionConfig.DefaultLogRoot)
     {
         public const int DefaultTerminalFontSize = 16;
         public const int MinTerminalFontSize = 8;
@@ -55,6 +57,7 @@ namespace AgentLegion.Services
         public const string DefaultBuildCmd = "make";
         public const string DefaultServerScriptDir = "~/script/local";
         public const string DefaultServerSession = "wind";
+        public const string DefaultLogRoot = "~/wind/data_local/logs";
         public const string DeployFile = "wind";
 
         /// <summary>The Windows jobs root with environment variables expanded.</summary>
@@ -176,7 +179,8 @@ namespace AgentLegion.Services
                     !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False),
                     string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize,
                     Or("deployRoot", LegionConfig.DefaultDeployRoot), Or("buildCmd", LegionConfig.DefaultBuildCmd),
-                    Or("serverScriptDir", LegionConfig.DefaultServerScriptDir), Or("serverSession", LegionConfig.DefaultServerSession));
+                    Or("serverScriptDir", LegionConfig.DefaultServerScriptDir), Or("serverSession", LegionConfig.DefaultServerSession),
+                    Or("logRoot", LegionConfig.DefaultLogRoot));
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -240,6 +244,19 @@ namespace AgentLegion.Services
                 Set("buildCmd", buildCmd, LegionConfig.DefaultBuildCmd);
                 Set("serverScriptDir", scriptDir, LegionConfig.DefaultServerScriptDir);
                 Set("serverSession", session, LegionConfig.DefaultServerSession);
+            });
+        }
+
+        /// <summary>Saves the Logs tab's default folder; blank means the default. Only read through \\wsl.localhost, so spaces are fine.</summary>
+        public CommandResult SaveLogRoot(string? logRoot)
+        {
+            var value = logRoot?.Trim();
+            if (!string.IsNullOrEmpty(value) && !Regex.IsMatch(value, @"^(~|~/[^\x00-\x1f]*|/[^\x00-\x1f]*)$"))
+                return new CommandResult(false, $"로그 폴더가 올바르지 않습니다: {logRoot} (절대 경로 또는 ~/...)");
+            return UpdateConfig("로그 폴더", root =>
+            {
+                if (string.IsNullOrEmpty(value) || value == LegionConfig.DefaultLogRoot) root.Remove("logRoot");
+                else root["logRoot"] = value;
             });
         }
 

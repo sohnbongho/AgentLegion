@@ -1,4 +1,4 @@
-@inject FileBrowserState State
+@* the page cascades its own tree state (Files or Logs) *@
 
 <li>
     @if (Node.Kind == FileNodeKind.File)
@@ -78,6 +78,8 @@
 </style>
 
 @code {
+    [CascadingParameter] public FileTreeState State { get; set; } = default!;
+
     [Parameter, EditorRequired] public FileNode Node { get; set; } = default!;
 
     [Parameter] public int Depth { get; set; }
