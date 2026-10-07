@@ -24,6 +24,10 @@ else if (State.Preview is { } p)
         <div class="d-flex align-items-center gap-2 flex-wrap">
             <span class="badge bg-secondary text-uppercase">@KindLabel(p.Kind)</span>
             <code class="fp-path" title="@p.LinuxPath">@p.LinuxPath</code>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-auto text-nowrap" @onclick="State.RevealSelectedInExplorer"
+                    title="이 파일이 있는 폴더를 Windows 탐색기로 엽니다">
+                <span class="oi oi-folder me-1" aria-hidden="true"></span>탐색기에서 열기
+            </button>
         </div>
         <div class="d-flex gap-3 mt-1 small text-muted align-items-center flex-wrap">
             <span><strong>크기:</strong> @FormatBytes(p.Size)</span>
@@ -44,6 +48,11 @@ else if (State.Preview is { } p)
             }
         </div>
     </div>
+
+    @if (State.ExplorerError is not null)
+    {
+        <div class="alert alert-danger py-2 small mb-2" role="alert">@State.ExplorerError</div>
+    }
 
     @if (p.Notice is not null)
     {
@@ -118,7 +127,7 @@ else if (State.Preview is { } p)
 
 @code {
     private bool _showSource;
-    private bool _allowScripts;
+    private bool _allowScripts = true;
     private string? _lastPath;
 
     protected override void OnInitialized()
@@ -138,13 +147,14 @@ else if (State.Preview is { } p)
         InvokeAsync(StateHasChanged);
     }
 
-    // every file opens in preview mode with scripts off
+    // every file opens in preview mode with scripts on: reports often need them to show their content at all
+    // (language switch, Mermaid), and without allow-same-origin the page still cannot touch the app
     private void ResetOnNewFile()
     {
         if (State.SelectedPath == _lastPath) return;
         _lastPath = State.SelectedPath;
         _showSource = false;
-        _allowScripts = false;
+        _allowScripts = true;
     }
 
     private static bool HasRendered(FilePreview p) =>

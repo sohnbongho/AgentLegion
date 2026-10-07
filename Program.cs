@@ -30,6 +30,7 @@ namespace AgentLegion
             builder.Services.AddScoped<RedisKeyService>();
             builder.Services.AddScoped<KeyBrowserState>();
             builder.Services.AddSingleton<WslFileService>();
+            builder.Services.AddSingleton<FileBrowserMemory>();
             builder.Services.AddScoped<FileBrowserState>();
 
             var app = builder.Build();

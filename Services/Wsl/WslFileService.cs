@@ -61,6 +61,28 @@ public sealed class WslFileService
 
     public static string Combine(string dir, string name) => dir == "/" ? "/" + name : dir + "/" + name;
 
+    public bool DirectoryExists(string distro, string linuxPath) => Directory.Exists(ToUncPath(distro, linuxPath));
+
+    public bool FileExists(string distro, string linuxPath) => File.Exists(ToUncPath(distro, linuxPath));
+
+    /// <summary>Opens the file's folder in Windows Explorer with the file selected.</summary>
+    public string? RevealInExplorer(string distro, string linuxPath)
+    {
+        var unc = ToUncPath(distro, linuxPath);
+        if (!File.Exists(unc)) return "파일이 없습니다.";
+        try
+        {
+            // explorer parses its own command line, so the path is quoted by hand (Windows paths cannot hold quotes)
+            using var _ = Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{unc}\"") { UseShellExecute = false });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Opening Explorer for {Path} failed", unc);
+            return ex.Message;
+        }
+    }
+
     public Task<List<FileNode>> ListAsync(string distro, string linuxPath, bool showHidden, CancellationToken ct = default) =>
         Task.Run(() =>
         {

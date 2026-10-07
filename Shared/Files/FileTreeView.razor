@@ -103,11 +103,7 @@
 
     private Task OpenAsync(string path) => State.OpenRootAsync(path);
 
-    private async Task ToggleHidden(ChangeEventArgs e)
-    {
-        State.ShowHidden = e.Value is true;
-        await State.ReloadAsync();
-    }
+    private Task ToggleHidden(ChangeEventArgs e) => State.SetShowHiddenAsync(e.Value is true);
 
     private Task Reload() => State.ReloadAsync();
 }

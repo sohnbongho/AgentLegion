@@ -7,13 +7,15 @@ public sealed class FileBrowserState : IDisposable
 {
     private readonly WslFileService _files;
     private readonly WslInfoService _wsl;
+    private readonly FileBrowserMemory _memory;
     private readonly ILogger<FileBrowserState> _logger;
     private CancellationTokenSource _previewOp = new();
 
-    public FileBrowserState(WslFileService files, WslInfoService wsl, ILogger<FileBrowserState> logger)
+    public FileBrowserState(WslFileService files, WslInfoService wsl, FileBrowserMemory memory, ILogger<FileBrowserState> logger)
     {
         _files = files;
         _wsl = wsl;
+        _memory = memory;
         _logger = logger;
     }
 
@@ -25,7 +27,7 @@ public sealed class FileBrowserState : IDisposable
 
     public HashSet<string> Expanded { get; } = new(StringComparer.Ordinal);
 
-    public bool ShowHidden { get; set; }
+    public bool ShowHidden { get; private set; }
 
     public string? SelectedPath { get; private set; }
 
@@ -40,6 +42,9 @@ public sealed class FileBrowserState : IDisposable
     public string? LastError { get; private set; }
 
     public string? PreviewError { get; private set; }
+
+    /// <summary>Why "탐색기에서 열기" failed for the selected file; cleared on the next selection.</summary>
+    public string? ExplorerError { get; private set; }
 
     /// <summary>The distro exists but is stopped; reading its share would start it.</summary>
     public bool DistroStopped { get; private set; }
@@ -76,7 +81,54 @@ public sealed class FileBrowserState : IDisposable
             IsBusy = false;
             Raise();
         }
-        await OpenRootAsync(Home);
+        await RestoreAsync();
+    }
+
+    // Reopens the folder and file of the last visit; a file that no longer exists is simply not selected.
+    private async Task RestoreAsync()
+    {
+        var saved = _memory.Load(Distro!);
+        ShowHidden = saved?.ShowHidden ?? false;
+        var root = saved?.Root is { } r && _files.DirectoryExists(Distro!, r) ? r : Home;
+        await OpenRootAsync(root);
+
+        if (saved?.Selected is not { } selected || !_files.FileExists(Distro!, selected)) return;
+        var node = await RevealAsync(selected);
+        if (node is not null) await SelectAsync(node);
+    }
+
+    /// <summary>Expands the folders between the root and <paramref name="linuxPath"/> and returns its node.</summary>
+    private async Task<FileNode?> RevealAsync(string linuxPath)
+    {
+        var dir = Root;
+        if (dir is null) return null;
+        var prefix = dir.LinuxPath == "/" ? "/" : dir.LinuxPath + "/";
+        if (!linuxPath.StartsWith(prefix, StringComparison.Ordinal)) return null;
+
+        var segments = linuxPath[prefix.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var child = dir.Children.FirstOrDefault(c => c.Name == segments[i]);
+            if (child is null) return null; // hidden, or gone since the listing
+            if (i == segments.Length - 1) return child.Kind == FileNodeKind.File ? child : null;
+            if (child.Kind != FileNodeKind.Directory) return null;
+            Expanded.Add(child.LinuxPath);
+            if (!child.IsLoaded) await LoadChildrenAsync(child);
+            dir = child;
+        }
+        return null;
+    }
+
+    public async Task SetShowHiddenAsync(bool show)
+    {
+        ShowHidden = show;
+        Remember();
+        await ReloadAsync();
+    }
+
+    private void Remember()
+    {
+        if (Distro is not null) _memory.Save(Distro, new FileBrowserSnapshot(Root?.LinuxPath, SelectedPath, ShowHidden));
     }
 
     public async Task OpenRootAsync(string? path)
@@ -89,6 +141,7 @@ public sealed class FileBrowserState : IDisposable
         Expanded.Clear();
         Expanded.Add(linuxPath);
         await LoadChildrenAsync(root);
+        Remember();
     }
 
     public Task ReloadAsync() => Root is null ? Task.CompletedTask : ReloadKeepingExpandedAsync();
@@ -164,8 +217,10 @@ public sealed class FileBrowserState : IDisposable
         var ct = _previewOp.Token;
 
         SelectedPath = file.LinuxPath;
+        Remember();
         Preview = null;
         PreviewError = null;
+        ExplorerError = null;
         PreviewLoading = true;
         Raise();
         try
@@ -187,6 +242,13 @@ public sealed class FileBrowserState : IDisposable
                 Raise();
             }
         }
+    }
+
+    public void RevealSelectedInExplorer()
+    {
+        if (Distro is null || SelectedPath is null) return;
+        ExplorerError = _files.RevealInExplorer(Distro, SelectedPath) is { } error ? $"탐색기를 열지 못했습니다: {error}" : null;
+        Raise();
     }
 
     private void Raise() => Changed?.Invoke();
