@@ -1,0 +1,104 @@
+@inject FileBrowserState State
+
+<li>
+    @if (Node.Kind == FileNodeKind.File)
+    {
+        <div class="@FileClass" role="button" @onclick="Select" style="@RowStyle" title="@Node.LinuxPath">
+            <span class="expand-btn"></span>
+            <span class="@FileIconClass me-1" aria-hidden="true"></span>
+            <span class="file-name">@Node.Name</span>
+        </div>
+    }
+    else
+    {
+        <div class="folder-row" role="button" @onclick="Toggle" style="@RowStyle" title="@Node.LinuxPath">
+            <span class="expand-btn">@(State.IsExpanded(Node) ? "−" : "+")</span>
+            <span class="oi oi-folder folder-icon me-1" aria-hidden="true"></span>
+            <span class="folder-label">@(Depth == 0 ? Node.LinuxPath : Node.Name)</span>
+        </div>
+
+        @if (State.IsExpanded(Node))
+        {
+            <ul>
+                @if (!Node.IsLoaded)
+                {
+                    <li class="text-muted small" style="@ChildPad">로딩 중...</li>
+                }
+                else if (Node.Error is not null)
+                {
+                    <li class="text-danger small" style="@ChildPad" title="@Node.Error">⚠ @Node.Error</li>
+                }
+                else if (Node.Children.Count == 0)
+                {
+                    <li class="text-muted small" style="@ChildPad">(비어 있음)</li>
+                }
+                else
+                {
+                    @foreach (var child in Node.Children)
+                    {
+                        <FileTreeNode @key="child.LinuxPath" Node="child" Depth="@(Depth + 1)" />
+                    }
+                }
+            </ul>
+        }
+    }
+</li>
+
+<style>
+    .folder-row, .file-row {
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 3px;
+        user-select: none;
+        white-space: nowrap;
+    }
+    .folder-row:hover, .file-row:hover {
+        background: #f1f3f5;
+    }
+    .file-row.active {
+        background: #cfe2ff;
+    }
+    .file-row.previewable .file-name {
+        font-weight: 500;
+    }
+    .expand-btn {
+        display: inline-block;
+        width: 1rem;
+        text-align: center;
+        font-weight: bold;
+        color: #555;
+        font-size: .85rem;
+    }
+    .folder-icon {
+        color: #e0a800;
+    }
+    .file-name {
+        font-size: .9rem;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public FileNode Node { get; set; } = default!;
+
+    [Parameter] public int Depth { get; set; }
+
+    private string FileClass => "file-row"
+        + (WslFileService.HasRichPreview(Node.Extension) ? " previewable" : "")
+        + (State.SelectedPath == Node.LinuxPath ? " active" : "");
+
+    private string RowStyle => $"padding-left: calc({Depth}rem + 4px)";
+
+    private string ChildPad => $"padding-left: calc({Depth + 1}rem + 1.25rem)";
+
+    private string FileIconClass => Node.Extension switch
+    {
+        ".md" or ".markdown" => "oi oi-document",
+        ".puml" or ".plantuml" or ".pu" or ".iuml" or ".wsd" => "oi oi-project",
+        ".html" or ".htm" => "oi oi-globe",
+        _ => "oi oi-file",
+    };
+
+    private Task Toggle() => State.ToggleAsync(Node);
+
+    private Task Select() => State.SelectAsync(Node);
+}

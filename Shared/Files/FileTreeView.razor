@@ -1,0 +1,113 @@
+@inject FileBrowserState State
+@implements IDisposable
+
+<div class="tree-toolbar p-2 border-bottom">
+    <div class="input-group input-group-sm mb-2">
+        <input type="text" class="form-control" placeholder="경로 예: ~/agentjobs, /etc"
+               value="@_path"
+               @oninput="OnPathInput"
+               @onkeydown="OnPathKeyDown" />
+        <button class="btn btn-outline-primary" type="button" @onclick="ApplyPath" disabled="@State.IsBusy">Open</button>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="GoUp" disabled="@(State.IsBusy || State.Root?.LinuxPath == "/")" title="상위 폴더">
+            <span class="oi oi-arrow-top" aria-hidden="true"></span>
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="GoHome" disabled="@State.IsBusy" title="홈 폴더">
+            <span class="oi oi-home" aria-hidden="true"></span>
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="Reload" disabled="@State.IsBusy">
+            @if (State.IsBusy)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            }
+            새로고침
+        </button>
+        <div class="form-check form-check-inline small mb-0 ms-auto">
+            <input class="form-check-input" type="checkbox" id="showHidden" checked="@State.ShowHidden" @onchange="ToggleHidden" />
+            <label class="form-check-label" for="showHidden">숨김 파일</label>
+        </div>
+    </div>
+</div>
+
+<div class="tree-body p-1">
+    @if (State.Root is null)
+    {
+        <div class="text-muted small p-2">로딩 중...</div>
+    }
+    else
+    {
+        <ul class="tree-list">
+            <FileTreeNode Node="State.Root" Depth="0" />
+        </ul>
+    }
+</div>
+
+<style>
+    .tree-list, .tree-list ul {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+    }
+</style>
+
+@code {
+    private string _path = "";
+    private string? _lastRoot;
+
+    protected override void OnInitialized()
+    {
+        SyncPath();
+        State.Changed += OnStateChanged;
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChanged;
+    }
+
+    private void OnStateChanged()
+    {
+        SyncPath();
+        InvokeAsync(StateHasChanged);
+    }
+
+    // the box follows the opened folder (the first one opens after this view is already shown)
+    private void SyncPath()
+    {
+        if (State.Root?.LinuxPath is { } p && p != _lastRoot)
+        {
+            _lastRoot = p;
+            _path = p;
+        }
+    }
+
+    private void OnPathInput(ChangeEventArgs e)
+    {
+        _path = e.Value?.ToString() ?? "";
+    }
+
+    private async Task OnPathKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await ApplyPath();
+        }
+    }
+
+    private Task ApplyPath() => OpenAsync(_path);
+
+    private Task GoHome() => OpenAsync(State.Home);
+
+    private Task GoUp() => OpenAsync((State.Root?.LinuxPath ?? "/") + "/..");
+
+    private Task OpenAsync(string path) => State.OpenRootAsync(path);
+
+    private async Task ToggleHidden(ChangeEventArgs e)
+    {
+        State.ShowHidden = e.Value is true;
+        await State.ReloadAsync();
+    }
+
+    private Task Reload() => State.ReloadAsync();
+}

@@ -2,6 +2,7 @@ using AgentLegion.Data;
 using System.Text;
 using AgentLegion.Services;
 using AgentLegion.Services.Redis;
+using AgentLegion.Services.Wsl;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -28,6 +29,8 @@ namespace AgentLegion
             builder.Services.AddScoped<RedisConnectionService>();
             builder.Services.AddScoped<RedisKeyService>();
             builder.Services.AddScoped<KeyBrowserState>();
+            builder.Services.AddSingleton<WslFileService>();
+            builder.Services.AddScoped<FileBrowserState>();
 
             var app = builder.Build();
 

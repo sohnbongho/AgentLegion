@@ -1,0 +1,72 @@
+@page "/files"
+@inject FileBrowserState State
+@implements IDisposable
+
+<PageTitle>Files - AgentLegion</PageTitle>
+
+<div class="d-flex align-items-center mb-3">
+    <h1 class="me-auto mb-0">Files</h1>
+    @if (State.Distro is not null)
+    {
+        <span class="badge bg-success me-2">WSL</span>
+        <code>@State.Distro</code>
+    }
+</div>
+
+@if (State.DistroStopped)
+{
+    <div class="alert alert-warning d-flex align-items-center gap-3" role="alert">
+        <span class="me-auto"><strong>@State.Distro</strong> 배포판이 중지되어 있습니다. 파일을 열면 WSL이 시작됩니다.</span>
+        <button type="button" class="btn btn-sm btn-warning" @onclick="StartAnyway">WSL 시작 후 열기</button>
+    </div>
+}
+else if (!State.IsInitialized)
+{
+    @if (!string.IsNullOrEmpty(State.LastError))
+    {
+        <div class="alert alert-danger" role="alert">@State.LastError</div>
+    }
+    else
+    {
+        <p class="text-muted">WSL 정보를 확인하는 중...</p>
+    }
+}
+else
+{
+    <div class="browser-layout">
+        <div class="browser-tree">
+            <FileTreeView />
+        </div>
+        <div class="browser-value">
+            <FilePreviewPanel />
+        </div>
+    </div>
+}
+
+@code {
+    private bool disposed;
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // the prerender pass would list the distro a second time
+        if (firstRender && !State.IsInitialized) await State.InitializeAsync();
+    }
+
+    private Task StartAnyway() => State.InitializeAsync(startDistro: true);
+
+    private void OnStateChanged()
+    {
+        if (!disposed) _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        State.Changed -= OnStateChanged;
+    }
+}
