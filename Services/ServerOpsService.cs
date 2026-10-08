@@ -55,11 +55,17 @@ namespace AgentLegion.Services
             }
         }
 
+        /// <summary>Ends the run; the last log line says how it ended and when.</summary>
         internal void Finish(int exitCode)
         {
             ExitCode = exitCode;
             EndedAt = DateTime.Now;
+            var how = Cancelled ? "취소됨" : exitCode == 0 ? "완료" : $"실패 (exit {exitCode})";
+            Add($"── {Action} {how} · {EndedAt:yyyy-MM-dd HH:mm:ss} ({FormatElapsed(Elapsed)}) ──");
         }
+
+        public static string FormatElapsed(TimeSpan t) =>
+            t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes}분 {t.Seconds}초" : $"{t.TotalSeconds:0.0}초";
 
         public string Text
         {
@@ -420,11 +426,17 @@ namespace AgentLegion.Services
               local w pipe="| $TO_UTF8 |"
               [ "$3" = raw ] && pipe="|"
               if tmux has-session -t "$AL_SESSION" 2>/dev/null; then
-                w=$(tmux new-window -P -F '#{window_id}' -t "$AL_SESSION" -n "$1" -c "$PWD")
+                # "session:" = the next free index in the session; a bare "wind" would match the window wind0 instead
+                w=$(tmux new-window -P -F '#{window_id}' -t "$AL_SESSION:" -n "$1" -c "$PWD")
               else
                 w=$(tmux new-session -d -P -F '#{window_id}' -s "$AL_SESSION" -n "$1" -c "$PWD")
               fi
-              [ -n "$w" ] || { echo "could not open tmux window $1" >&2; exit 1; }
+              if [ -z "$w" ]; then
+                # the session was not there before Run: drop the half-started one so Run can be tried again
+                echo "could not open tmux window $1 - stopping the servers started so far" >&2
+                tmux kill-session -t "$AL_SESSION" 2>/dev/null
+                exit 1
+              fi
               echo "[$1] $2"
               tmux send-keys -t "$w" "$2 2>&1 $pipe tee ./logs/log.$1 &" C-m
             }

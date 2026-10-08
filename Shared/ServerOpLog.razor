@@ -11,7 +11,7 @@
             <span class="badge @RunBadge(run)">@RunLabel(run)</span>
             <strong class="text-nowrap">@run.Job · @run.Action</strong>
             <span class="text-muted small text-truncate" title="@run.Detail">@run.Detail</span>
-            <span class="text-muted small ms-auto text-nowrap">@FormatElapsed(run.Elapsed)</span>
+            <span class="text-muted small ms-auto text-nowrap">@ServerOpRun.FormatElapsed(run.Elapsed)</span>
             @if (run.Running && run.Action == ServerAction.Build)
             {
                 <button class="btn btn-sm btn-outline-danger py-0" disabled="@run.Cancelled" @onclick="() => Ops.CancelAsync(run.Job)">취소</button>
@@ -120,9 +120,6 @@
 
     private static string RunLabel(ServerOpRun r) =>
         r.Running ? (r.Cancelled ? "취소 중" : "실행 중") : r.Cancelled ? "취소됨" : r.Ok ? "완료" : $"실패 (exit {r.ExitCode})";
-
-    private static string FormatElapsed(TimeSpan t) =>
-        t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes}분 {t.Seconds}초" : $"{t.TotalSeconds:0.0}초";
 
     public void Dispose()
     {
