@@ -83,7 +83,7 @@ a, .btn-link {
 }
 
 .terminal-host.with-server-log {
-    height: calc(100vh - 33rem);
+    height: calc(100vh - 45rem);
 }
 
 .terminal-host .xterm-viewport {
