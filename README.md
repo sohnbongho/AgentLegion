@@ -26,7 +26,8 @@ job은 **WSL**에서 돌릴 수도, **Windows PowerShell**에서 돌릴 수도 �
 dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:5165
 ```
 1. **Settings**에서 WSL 배포판, jobs 폴더(기본 `~/agentjobs`), 기본 repo를 저장합니다. Windows job을 쓸 거면 *Jobs root (Windows PowerShell)*도 지정합니다(기본 `%USERPROFILE%\agentjobs`).
-2. **Jobs**에서 이름과 환경(*WSL* / *Windows PowerShell*)을 고르고 **Add**합니다. 브랜치·repo는 비우면 기본값(`agent/<이름>`, 기본 repo)을 씁니다.
+2. **Jobs**에서 이름과 환경(*WSL* / *Windows PowerShell*)을 고르고 **Add**합니다. 브랜치·repo는 비우면 기본값(`agent/<이름>`, 기본 repo)을 씁니다. 추가하는 동안 단계(`[1/3]`…`[3/3]`)와 clone 진행률이 폼 아래에 실시간으로 표시됩니다.
+   - repo가 HTTPS면 git 로그인이 필요합니다. 앱은 git이 계정을 묻지 않고 바로 실패하게 실행하므로(묻는 창이 없어 멈추는 것을 방지), 계정이 없거나 토큰이 만료되면 Settings의 **Git 계정**에서 사용자 이름과 토큰을 저장합니다. 토큰은 legion.json에 남지 않고 git의 credential helper(WSL은 보통 `~/.git-credentials`, Windows는 Git Credential Manager)에 저장되며, **연결 확인**으로 `git ls-remote`를 시험할 수 있습니다.
 3. 사이드바 **Agents**에서 job을 누르면 그 폴더에서 `claude`가 실행되는 터미널이 열립니다.
 
 첫 화면(**Dashboard**)에도 같은 안내가 있습니다.
@@ -40,7 +41,7 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | Jobs | job 추가, 목록(Claude 이름·환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove, (WSL job) 서버 Build / Deploy / Stop / Run, 서버 상태 칩 |
 | job 화면 (`/jobs/<job>`) | claude 터미널 + `Claude · <이름>` 배지 + 상단바 정보 + 같은 도구 버튼 + (WSL job) 서버 Build / Deploy / Stop / Run |
 | Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
-| Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기, 서버 빌드·배포(기본 배포 경로·빌드 명령·스크립트 폴더) |
+| Settings | WSL 배포판, jobs 폴더, 기본 repo, Git 계정(HTTPS 로그인), Windows jobs 폴더, job 터미널 글꼴·크기, 서버 빌드·배포(기본 배포 경로·빌드 명령·스크립트 폴더) |
 | 사이드바 | Agents 목록(상태 점·라벨·`PS`·`WSL` 태그·변경 수), 하단에 WSL 상태 |
 
 ### job 환경: WSL / Windows PowerShell

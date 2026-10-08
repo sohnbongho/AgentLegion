@@ -301,22 +301,38 @@ function Cmd-Add($cfg) {
   # a job without its own Claude name runs under its job name, which must not be another job's Claude name
   Assert-ClaudeNameFree $cfg $Name $(if ($ClaudeName) { $ClaudeName } else { $Name }) -IsJobName:(-not $ClaudeName)
 
+  $envLabel = if ($Target -eq 'windows') { 'Windows' } else { 'WSL' }
+  if ($Path) { Write-Host "[add] $Name ($envLabel): use the existing folder $Path" }
+  else { Write-Host "[add] $Name ($envLabel): repo $(Hide-Credentials $repoUrl), branch $br" }
   if ($Path) { Add-Existing $cfg }
   elseif ($Target -eq 'windows') { Win-Add $cfg $br $repoUrl }
   else { Add-Wsl $cfg $br $repoUrl }
   if ($ClaudeName) { Set-ClaudeName $Name $ClaudeName }
+  Write-Host "[done] job $Name added"
 }
+
+# never echo credentials embedded in a URL into logs / the web UI
+function Hide-Credentials([string]$url) { $url -replace '://[^/@]*@', '://' }
 
 function Add-Wsl($cfg, $br, $repoUrl) {
   if (Test-WinJob $cfg $Name) { throw "a Windows job named '$Name' already exists; job names are shared across environments" }
   Assert-FolderFree $cfg 'wsl' "$($cfg.jobsRoot)/$Name"
   $repo = $repoUrl -replace "'", "'\''"
+  $shown = (Hide-Credentials $repoUrl) -replace "'", "'\''"
+  # --progress: git only reports clone progress to a terminal unless asked
   Invoke-Wsl $cfg @"
 set -e
+echo '[1/3] prepare $($cfg.jobsRoot)' >&2
 mkdir -p $($cfg.jobsRoot)
 cd $($cfg.jobsRoot)
-[ -d $Name/.git ] || git clone '$repo' $Name
+if [ -d $Name/.git ]; then
+  echo '[2/3] $($cfg.jobsRoot)/$Name is already a clone; skipped git clone' >&2
+else
+  echo '[2/3] git clone $shown -> $($cfg.jobsRoot)/$Name' >&2
+  git clone --progress '$repo' $Name
+fi
 cd $Name
+echo '[3/3] switch to branch $br' >&2
 git checkout $br 2>/dev/null || git checkout -b $br
 echo "$Name -> `$(git rev-parse --abbrev-ref HEAD)"
 "@
@@ -331,6 +347,7 @@ function Win-Add($cfg, $br, $repoUrl) {
   if ($wslHas) { throw "a WSL job named '$Name' already exists; job names are shared across environments" }
 
   $root = Get-WinRoot $cfg
+  [Console]::Error.WriteLine("[1/3] prepare $root")
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   $dir = Join-Path $root $Name
   Assert-FolderFree $cfg 'windows' $dir
@@ -338,10 +355,12 @@ function Win-Add($cfg, $br, $repoUrl) {
     if ((Test-Path -LiteralPath $dir) -and (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
       throw "folder exists and is not a git repository: $dir"
     }
+    [Console]::Error.WriteLine("[2/3] git clone $(Hide-Credentials $repoUrl) -> $dir")
     # long paths matter for Unity projects
-    & git clone -c core.longpaths=true $repoUrl $dir
+    & git clone --progress -c core.longpaths=true $repoUrl $dir
     if ($LASTEXITCODE -ne 0) { throw "git clone failed (exit $LASTEXITCODE)" }
-  }
+  } else { [Console]::Error.WriteLine("[2/3] $dir is already a clone; skipped git clone") }
+  [Console]::Error.WriteLine("[3/3] switch to branch $br")
   $hasBranch = @(Git-WinQuiet $dir @('rev-parse', '--verify', '--quiet', "refs/heads/$br")).Count -gt 0
   if ($hasBranch) { Git-Win $dir @('checkout', $br) | Out-Null }
   else { Git-Win $dir @('checkout', '-b', $br) | Out-Null }
@@ -365,9 +384,12 @@ function Add-Existing($cfg) {
 
   if ($isWin) {
     $dir = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    [Console]::Error.WriteLine("[1/3] check $dir")
     if (-not (Test-Path -LiteralPath (Join-Path $dir '.git'))) { throw "not a git repository: $dir" }
     Assert-FolderFree $cfg 'windows' $dir
+    if ($Branch) { [Console]::Error.WriteLine("[2/3] switch to branch $Branch") } else { [Console]::Error.WriteLine('[2/3] keep the current branch') }
     if ($Branch -and -not (Git-WinOk $dir @('checkout', $Branch))) { Git-Win $dir @('checkout', '-b', $Branch) | Out-Null }
+    [Console]::Error.WriteLine('[3/3] git pull --ff-only')
     if (Git-WinOk $dir @('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')) {
       & git -C $dir pull --ff-only
       if ($LASTEXITCODE -ne 0) { Write-Host "warning: git pull failed in $dir; the job was added without updating" }
@@ -377,11 +399,16 @@ function Add-Existing($cfg) {
   } else {
     $branchQ = if ($Branch) { $Branch -replace "'", "'\''" } else { '' }
     $script = "DIR=$Path`nBRANCH='$branchQ'`n" + @'
+echo "[1/3] check $DIR" >&2
 cd "$DIR" 2>/dev/null || { echo "folder not found: $DIR" >&2; exit 1; }
 [ -e .git ] || { echo "not a git repository: $DIR" >&2; exit 1; }
 if [ -n "$BRANCH" ]; then
+  echo "[2/3] switch to branch $BRANCH" >&2
   git checkout "$BRANCH" >/dev/null 2>&1 || git checkout -b "$BRANCH" >/dev/null 2>&1 || { echo "could not switch to $BRANCH" >&2; exit 1; }
+else
+  echo "[2/3] keep the current branch" >&2
 fi
+echo "[3/3] git pull --ff-only" >&2
 if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
   git pull --ff-only || echo "warning: git pull failed in $DIR; the job was added without updating"
 else

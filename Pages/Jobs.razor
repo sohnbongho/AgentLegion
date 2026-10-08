@@ -69,6 +69,13 @@ else
                     </button>
                 </div>
             </div>
+            @if (busyAction == "Add")
+            {
+                string[] lines;
+                lock (addLog) lines = addLog.ToArray();
+                <div class="small text-muted mt-3 mb-1">진행 상황 · @addElapsed</div>
+                <pre class="add-progress mb-0">@(lines.Length == 0 ? "시작하는 중..." : string.Join("\n", lines))</pre>
+            }
         </div>
     </div>
 
@@ -343,10 +350,38 @@ else
 
     private void StopSession(string job) => Sessions.Stop(job);
 
+    private readonly List<string> addLog = new(); // the running add's output, filled from the process's reader threads
+    private string addElapsed = "";
+    private bool addRenderPending;
+
+    private void OnAddLine(string line)
+    {
+        lock (addLog)
+        {
+            LegionService.AppendOutputLine(addLog, line);
+            if (addRenderPending) return;
+            addRenderPending = true;
+        }
+        // clone progress arrives many times a second: redraw at most every 200 ms
+        _ = InvokeAsync(async () =>
+        {
+            await Task.Delay(200);
+            lock (addLog) addRenderPending = false;
+            if (!disposed) StateHasChanged();
+        });
+    }
+
     private async Task AddJobAsync()
     {
         var name = newName.Trim();
-        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath, newClaudeName));
+        lock (addLog) addLog.Clear();
+        var started = DateTime.UtcNow;
+        using var ticker = new System.Threading.Timer(_ => _ = InvokeAsync(() =>
+        {
+            addElapsed = $"{(DateTime.UtcNow - started).TotalSeconds:0}초";
+            if (!disposed) StateHasChanged();
+        }), null, 0, 1000);
+        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath, newClaudeName, OnAddLine));
         if (result is { Ok: true })
         {
             newName = "";

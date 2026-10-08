@@ -298,8 +298,9 @@ namespace AgentLegion.Services
         /// <param name="windows">true = a native Windows PowerShell job (e.g. Unity), false = a WSL job.</param>
         /// <param name="path">An existing clone to use: nothing is cloned, it is only pulled. Blank = clone into the jobs root.</param>
         /// <param name="claudeName">The Claude session name; blank = the job name.</param>
+        /// <param name="onLine">Receives the add's output (steps, clone progress) line by line while it runs.</param>
         public Task<CommandResult> AddJobAsync(string job, string? branch, string? repo, bool windows = false, string? path = null,
-            string? claudeName = null)
+            string? claudeName = null, Action<string>? onLine = null)
         {
             var args = new List<string> { "add", job.Trim() };
             if (!string.IsNullOrWhiteSpace(branch)) args.AddRange(new[] { "-Branch", branch.Trim() });
@@ -307,7 +308,7 @@ namespace AgentLegion.Services
             if (!string.IsNullOrWhiteSpace(path)) args.AddRange(new[] { "-Path", path.Trim() });
             else if (!string.IsNullOrWhiteSpace(repo)) args.AddRange(new[] { "-Repo", repo.Trim() });
             if (windows) args.AddRange(new[] { "-Target", "windows" });
-            return RunAsync(NetworkTimeout, args.ToArray());
+            return RunAsync(NetworkTimeout, args.ToArray(), onLine);
         }
 
         /// <summary>Installed WSL distributions (wsl -l -q); empty if WSL is unavailable.</summary>
@@ -491,7 +492,11 @@ namespace AgentLegion.Services
         /// <summary>Removes a job without checking for uncommitted or unpushed work (the UI asks for confirmation first).</summary>
         public Task<CommandResult> RemoveAsync(string job) => RunAsync(DefaultTimeout, "remove", job);
 
-        private async Task<CommandResult> RunAsync(TimeSpan timeout, params string[] args)
+        // These open a terminal / editor window that inherits the environment: git there must still be able to ask.
+        private static readonly HashSet<string> InteractiveCommands = new(StringComparer.OrdinalIgnoreCase) { "code", "shell", "start" };
+
+        /// <param name="onLine">Receives each output line (stdout and stderr) as it is printed.</param>
+        private async Task<CommandResult> RunAsync(TimeSpan timeout, string[] args, Action<string>? onLine = null)
         {
             if (!File.Exists(_scriptPath))
                 return new CommandResult(false, $"legion.ps1 not found: {_scriptPath}");
@@ -509,27 +514,51 @@ namespace AgentLegion.Services
                 psi.ArgumentList.Add(a);
             // the script and this service must use the same data folder, also when it was set through Legion:DataDir
             psi.Environment["AGENTLEGION_HOME"] = _dataDir;
+            if (args.Length == 0 || !InteractiveCommands.Contains(args[0]))
+                GitAccountService.DisableGitPrompts(psi);
+
+            var stdout = new List<string>();
+            var log = new List<string>(); // both streams in the order they arrived
+            void Receive(bool isStdout, string? line)
+            {
+                if (line is null) return;
+                line = line.TrimEnd(); // git pads progress lines with spaces
+                lock (log)
+                {
+                    if (isStdout) stdout.Add(line);
+                    AppendOutputLine(log, line);
+                }
+                onLine?.Invoke(line);
+            }
 
             using var cts = new CancellationTokenSource(timeout);
             Process? proc = null;
             try
             {
-                proc = Process.Start(psi)!;
-                var stdout = proc.StandardOutput.ReadToEndAsync(cts.Token);
-                var stderr = proc.StandardError.ReadToEndAsync(cts.Token);
+                proc = new Process { StartInfo = psi };
+                proc.OutputDataReceived += (_, e) => Receive(true, e.Data);
+                proc.ErrorDataReceived += (_, e) => Receive(false, e.Data);
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
                 await proc.WaitForExitAsync(cts.Token);
 
-                var (o, e) = (await stdout, await stderr);
+                string Text(List<string> lines) { lock (log) return string.Join("\n", lines).Trim(); }
                 if (proc.ExitCode != 0)
-                    return new CommandResult(false, FirstNonEmpty(e, o) ?? $"legion.ps1 exited with {proc.ExitCode}");
+                    return new CommandResult(false, WithAuthHint(Text(log) is { Length: > 0 } all ? all : $"legion.ps1 exited with {proc.ExitCode}"));
 
-                // git writes progress to stderr even on success, so show both
-                return new CommandResult(true, string.Join("\n", new[] { o.Trim(), e.Trim() }.Where(s => s.Length > 0)));
+                // -Json output is parsed, so it must be stdout alone; otherwise show both streams in the order they
+                // came (git writes progress to stderr even on success)
+                return new CommandResult(true, args.Contains("-Json") ? Text(stdout) : Text(log));
             }
             catch (OperationCanceledException)
             {
                 try { proc?.Kill(entireProcessTree: true); } catch { /* already exited */ }
-                return new CommandResult(false, $"legion.ps1 timed out after {timeout.TotalSeconds:0}s");
+                string partial;
+                lock (log) partial = string.Join("\n", log).Trim();
+                // keep what was printed: it shows the step that never finished
+                var message = $"legion.ps1 timed out after {timeout.TotalSeconds:0}s";
+                return new CommandResult(false, WithAuthHint(partial.Length > 0 ? $"{partial}\n{message}" : message));
             }
             catch (Exception ex)
             {
@@ -541,7 +570,28 @@ namespace AgentLegion.Services
             }
         }
 
-        private static string? FirstNonEmpty(params string[] texts) =>
-            texts.Select(t => t.Trim()).FirstOrDefault(t => t.Length > 0);
+        private Task<CommandResult> RunAsync(TimeSpan timeout, params string[] args) => RunAsync(timeout, args, null);
+
+        // "Receiving objects:  12% (69/570)", "remote: Counting objects:   3% (18/570)"
+        private static readonly Regex ProgressLine = new(@"^(.*?):\s+\d+% \(", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Adds an output line, replacing the previous one when both are progress updates of the same step
+        /// ("Receiving objects:  12% ..."), so a clone leaves one line per step instead of hundreds.
+        /// </summary>
+        public static void AppendOutputLine(List<string> lines, string line)
+        {
+            if (lines.Count > 0 && ProgressLine.Match(line) is { Success: true } m
+                && ProgressLine.Match(lines[^1]) is { Success: true } prev && prev.Groups[1].Value == m.Groups[1].Value)
+                lines[^1] = line;
+            else
+                lines.Add(line);
+        }
+
+        // git gives up instead of prompting (GIT_TERMINAL_PROMPT=0): point at where the login is entered
+        private static string WithAuthHint(string output) =>
+            GitAccountService.LooksLikeAuthFailure(output)
+                ? output + "\n\n→ git 로그인에 실패했습니다. Settings의 'Git 계정'에서 사용자 이름과 토큰(비밀번호)을 저장한 뒤 다시 시도하세요."
+                : output;
     }
 }

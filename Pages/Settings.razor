@@ -2,6 +2,7 @@
 @using AgentLegion.Services
 @inject LegionService Legion
 @inject JobStore Store
+@inject GitAccountService Git
 
 <PageTitle>Settings - AgentLegion</PageTitle>
 
@@ -73,6 +74,73 @@
     <label class="form-label" for="repo">Default repo</label>
     <input id="repo" class="form-control" @bind="repo" placeholder="git@github.com:me/proj.git" />
     <div class="form-text">URL 또는 WSL 절대경로(<code>~</code>는 사용할 수 없음). job마다 따로 지정할 수도 있습니다.</div>
+</div>
+
+<h2 class="h5 mt-4">Git 계정</h2>
+
+<div class="mb-3" style="max-width: 36rem;">
+    @if (GitRemote is not { } remote)
+    {
+        <div class="form-text mt-0">
+            Default repo가 HTTPS 주소가 아니라서(SSH 키 또는 로컬 경로) 여기서 넣을 계정이 없습니다.
+        </div>
+    }
+    else
+    {
+        <p class="form-text mt-0">
+            job 추가(clone · pull)와 Push가 <code>@remote.Scheme://@remote.Authority</code>에 로그인할 때 쓰는 계정입니다.
+            계정이 없거나 토큰이 만료되면 git이 묻지 않고 바로 실패하므로, 여기서 새 토큰을 저장하세요.
+        </p>
+        <div class="small mb-2">
+            저장된 계정:
+            @if (gitLoading)
+            {
+                <span class="text-muted">확인 중...</span>
+            }
+            else if (gitState is not null)
+            {
+                <span class="me-3">WSL <strong>@(gitState.WslUser ?? "없음")</strong></span>
+                <span>Windows <strong>@(gitState.WindowsNote ?? gitState.WindowsUser ?? "없음")</strong></span>
+            }
+        </div>
+        <div class="row g-2">
+            <div class="col-5">
+                <label class="form-label" for="gituser">사용자 이름</label>
+                <input id="gituser" class="form-control" @bind="gitUser" autocomplete="off" spellcheck="false" />
+            </div>
+            <div class="col-7">
+                <label class="form-label" for="gittoken">토큰 (또는 비밀번호)</label>
+                <input id="gittoken" type="password" class="form-control" @bind="gitToken" @bind:event="oninput" autocomplete="new-password" />
+            </div>
+        </div>
+        <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-outline-primary btn-sm" disabled="@(gitBusy || string.IsNullOrWhiteSpace(gitUser) || string.IsNullOrEmpty(gitToken))" @onclick="SaveGitAccountAsync">계정 저장</button>
+            <button class="btn btn-outline-secondary btn-sm" disabled="@gitBusy" @onclick="TestGitAsync">연결 확인</button>
+            @if (confirmGitDelete)
+            {
+                <button class="btn btn-danger btn-sm ms-auto" disabled="@gitBusy" @onclick="DeleteGitAccountAsync">정말 삭제</button>
+                <button class="btn btn-link btn-sm" @onclick="() => confirmGitDelete = false">취소</button>
+            }
+            else
+            {
+                <button class="btn btn-outline-danger btn-sm ms-auto" disabled="@gitBusy" @onclick="() => confirmGitDelete = true">저장된 계정 삭제</button>
+            }
+        </div>
+        @if (gitBusy)
+        {
+            <div class="form-text">git을 실행하는 중...</div>
+        }
+        @if (gitResult is not null)
+        {
+            <div class="alert @(gitResult.Ok ? "alert-success" : "alert-danger") py-2 mt-2 mb-0 small" role="alert" style="white-space: pre-wrap;">@gitResult.Output</div>
+        }
+        <div class="form-text">
+            비밀번호보다 액세스 토큰(GitLab: <code>read_repository</code>, <code>write_repository</code> 권한)을 권장합니다.
+            토큰은 legion.json에 저장하지 않고 git의 credential helper에 바로 넣습니다.
+            WSL은 보통 <code>store</code>(<code>~/.git-credentials</code>, 평문 파일), Windows는 Git Credential Manager입니다.
+            이 버튼은 위의 Save와 별개로 바로 적용됩니다.
+        </div>
+    }
 </div>
 
 <h2 class="h5 mt-4">Job 터미널</h2>
@@ -232,6 +300,16 @@
     private string? logRoot = LegionConfig.DefaultLogRoot;
     private List<JobInfo> jobOrder = new();
     private bool jobOrderChanged; // untouched, nothing is saved: new jobs keep falling into name order
+    private string? gitUser;
+    private string? gitToken;   // only held until it is handed to git
+    private GitAccountState? gitState;
+    private bool gitLoading;
+    private bool gitBusy;
+    private CommandResult? gitResult;
+    private bool confirmGitDelete;
+
+    // the host comes from the Default repo field as typed
+    private Uri? GitRemote => GitAccountService.HttpsRemote(repo);
 
     private static readonly string[] fontSuggestions =
     {
@@ -270,9 +348,57 @@
             logRoot = cfg.LogRoot;
         }
         var loadJobs = Store.EnsureLoadedAsync();
+        var loadGit = LoadGitStateAsync();
         distros = await Legion.GetDistrosAsync();
         await loadJobs;
         jobOrder = Store.Jobs.ToList();
+        await loadGit;
+    }
+
+    private async Task LoadGitStateAsync()
+    {
+        if (GitRemote is not { } remote) return;
+        gitLoading = true;
+        try
+        {
+            gitState = await Git.GetStateAsync(remote);
+            gitUser ??= gitState.WslUser ?? gitState.WindowsUser;
+        }
+        finally
+        {
+            gitLoading = false;
+        }
+    }
+
+    private async Task RunGitAsync(Func<Uri, Task<CommandResult>> action)
+    {
+        if (GitRemote is not { } remote) return;
+        gitBusy = true;
+        gitResult = null;
+        try
+        {
+            gitResult = await action(remote);
+            await LoadGitStateAsync();
+        }
+        finally
+        {
+            gitBusy = false;
+        }
+    }
+
+    private async Task SaveGitAccountAsync()
+    {
+        var token = gitToken ?? "";
+        gitToken = null; // never kept on the page after saving
+        await RunGitAsync(remote => Git.SaveAsync(remote, gitUser ?? "", token));
+    }
+
+    private Task TestGitAsync() => RunGitAsync(Git.TestAsync);
+
+    private Task DeleteGitAccountAsync()
+    {
+        confirmGitDelete = false;
+        return RunGitAsync(Git.DeleteAsync);
     }
 
     private void MoveJob(int index, int delta)
