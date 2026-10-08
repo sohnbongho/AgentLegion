@@ -38,15 +38,14 @@ namespace AgentLegion.Services
     /// <param name="TerminalFontFamily">Job terminal font (CSS font-family); null = the built-in monospace list.</param>
     /// <param name="DeployRoot">WSL folder a job's server binary is deployed to unless the job has its own (deploy-targets.json).</param>
     /// <param name="BuildCmd">Command a WSL job's Build button runs in the job folder.</param>
-    /// <param name="ServerScriptDir">WSL folder holding stop_wind_server.sh and run_gameserver.sh.</param>
-    /// <param name="ServerSession">tmux session the server scripts start and stop.</param>
+    /// <param name="ServerSession">tmux session Run starts the game server in and Stop kills.</param>
     /// <param name="LogRoot">Folder the Logs tab opens by default.</param>
     public record LegionConfig(string? Distro, string JobsRoot, string Repo, string ClaudeCmd = "claude",
         SessionStateDetection StateDetection = SessionStateDetection.Title,
         string? WindowsJobsRoot = null, string WindowsClaudeCmd = "claude", bool ResumeLastSession = true,
         string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize,
         string DeployRoot = LegionConfig.DefaultDeployRoot, string BuildCmd = LegionConfig.DefaultBuildCmd,
-        string ServerScriptDir = LegionConfig.DefaultServerScriptDir, string ServerSession = LegionConfig.DefaultServerSession,
+        string ServerSession = LegionConfig.DefaultServerSession,
         string LogRoot = LegionConfig.DefaultLogRoot, IReadOnlyList<string>? JobOrder = null)
     {
         public const int DefaultTerminalFontSize = 16;
@@ -55,7 +54,6 @@ namespace AgentLegion.Services
         public const string DefaultWindowsRoot = @"%USERPROFILE%\agentjobs";
         public const string DefaultDeployRoot = "~/wind/data";
         public const string DefaultBuildCmd = "make";
-        public const string DefaultServerScriptDir = "~/script/local";
         public const string DefaultServerSession = "wind";
         public const string DefaultLogRoot = "~/wind/data_local/logs";
         public const string DeployFile = "wind";
@@ -179,7 +177,7 @@ namespace AgentLegion.Services
                     !(root.TryGetProperty("resumeLastSession", out var rl) && rl.ValueKind == JsonValueKind.False),
                     string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize,
                     Or("deployRoot", LegionConfig.DefaultDeployRoot), Or("buildCmd", LegionConfig.DefaultBuildCmd),
-                    Or("serverScriptDir", LegionConfig.DefaultServerScriptDir), Or("serverSession", LegionConfig.DefaultServerSession),
+                    Or("serverSession", LegionConfig.DefaultServerSession),
                     Or("logRoot", LegionConfig.DefaultLogRoot),
                     root.TryGetProperty("jobOrder", out var jo) && jo.ValueKind == JsonValueKind.Array
                         ? jo.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList()
@@ -225,12 +223,10 @@ namespace AgentLegion.Services
         /// Saves the Build / Deploy / Run settings into legion.json (legion.ps1 does not use them; `init` keeps them).
         /// Blank values fall back to the defaults.
         /// </summary>
-        public CommandResult SaveServerSettings(string? deployRoot, string? buildCmd, string? scriptDir, string? session)
+        public CommandResult SaveServerSettings(string? deployRoot, string? buildCmd, string? session)
         {
             if (!string.IsNullOrWhiteSpace(deployRoot) && !IsValidWslPath(deployRoot))
                 return new CommandResult(false, $"배포 경로가 올바르지 않습니다: {deployRoot} (절대 경로 또는 ~/..., 공백 불가)");
-            if (!string.IsNullOrWhiteSpace(scriptDir) && !IsValidWslPath(scriptDir))
-                return new CommandResult(false, $"서버 스크립트 폴더가 올바르지 않습니다: {scriptDir}");
             if (!string.IsNullOrWhiteSpace(buildCmd) && !BuildCmdPattern.IsMatch(buildCmd.Trim()))
                 return new CommandResult(false, $"빌드 명령에 쓸 수 없는 문자가 있습니다: {buildCmd} (따옴표, ;, |, & 등 불가)");
             if (!string.IsNullOrWhiteSpace(session) && !Regex.IsMatch(session.Trim(), "^[A-Za-z0-9_.-]+$"))
@@ -245,7 +241,7 @@ namespace AgentLegion.Services
                 }
                 Set("deployRoot", deployRoot, LegionConfig.DefaultDeployRoot);
                 Set("buildCmd", buildCmd, LegionConfig.DefaultBuildCmd);
-                Set("serverScriptDir", scriptDir, LegionConfig.DefaultServerScriptDir);
+                root.Remove("serverScriptDir"); // no longer used: Run / Stop do not call the scripts in ~/script any more
                 Set("serverSession", session, LegionConfig.DefaultServerSession);
             });
         }

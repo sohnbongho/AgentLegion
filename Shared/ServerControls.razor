@@ -2,8 +2,8 @@
 @using AgentLegion.Services
 @inject ServerOpsService Ops
 
-@* Build / Deploy / Run / Stop for a WSL job: make in the job folder, copy its binary to the deploy folder, and the
-   game server scripts in ~/script/local (Settings). *@
+@* Build / Deploy / Run / Stop for a WSL job: make in the job folder, copy its binary to the deploy folder, and start /
+   stop the game server in its tmux session. *@
 <div class="server-bar" aria-label="Game server">
     <ServerStatusChip />
 
@@ -26,10 +26,10 @@
     </div>
 
     <div class="btn-group btn-group-sm" role="group" aria-label="Server">
-        <button class="btn btn-outline-danger" disabled="@Busy" @onclick="() => Start(ServerAction.Stop)" title="stop_wind_server.sh 실행 (tmux 세션 종료)">
+        <button class="btn btn-outline-danger" disabled="@Busy" @onclick="() => Start(ServerAction.Stop)" title="서버 종료 (tmux 세션 종료)">
             <span class="oi oi-media-stop" aria-hidden="true"></span> Stop
         </button>
-        <button class="btn btn-outline-success" disabled="@Busy" @onclick="() => Start(ServerAction.Run)" title="@($"run_gameserver.sh 실행 (서버 폴더: {target})")">
+        <button class="btn btn-outline-success" disabled="@Busy" @onclick="() => Start(ServerAction.Run)" title="@($"서버 실행 (tmux 세션에 wind·sessionServer 띄우기, 서버 폴더: {target})")">
             <span class="oi oi-media-play" aria-hidden="true"></span> Run
         </button>
     </div>

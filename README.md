@@ -87,15 +87,17 @@ WSL 칩과 사이드바 하단에 마우스를 올리면 WSL 패키지 버전·O
   병합은 CLI의 `merge`를 씁니다.
 
 ### 서버 빌드 · 배포 · 실행 (WSL job)
-job 화면 터미널 위의 줄에 있습니다(Windows job에는 없음). `~/script/local`의 서버 스크립트를 job 단위로 쓰도록 옮긴 것입니다. 배포 경로도 job 화면에서 바꿉니다.
+job 화면 터미널 위의 줄에 있습니다(Windows job에는 없음). `~/script/local`의 서버 스크립트가 하던 일을 job 단위로 앱에 옮긴 것으로, 이제 그 스크립트 파일은 쓰지 않습니다. 배포 경로도 job 화면에서 바꿉니다.
 
 | 버튼 | 동작 |
 |---|---|
 | **Build** | job 폴더에서 빌드 명령(기본 `make`)을 실행합니다. wind 서버의 `make`는 `make all` = clean 후 전체 빌드이며, 바뀐 파일만 빌드하려면 Settings에서 `make wind`로 바꿉니다. 실행 중에는 **취소**로 make와 자식 프로세스를 함께 멈춥니다. |
 | **배포 경로** | 이 job의 Deploy 대상이자 Run의 서버 폴더. 기본은 Settings의 *기본 배포 경로*(`~/wind/data`)이고, 칸을 고치면(Enter/포커스 이동) 이 job에만 저장됩니다. **기본값** 버튼으로 되돌립니다. |
 | **Deploy** | `deploy_gameServer.sh`처럼 `wind`를 배포 경로로 복사하되, 원본은 `~/wind/server`가 아닌 **이 job 폴더**입니다. 임시 파일로 복사한 뒤 이름을 바꿔 교체하므로 서버가 실행 중이어도 되고(`Text file busy` 없음), 대상이 `../serverBinary/...`를 가리키는 심볼릭 링크면 **링크만 실제 파일로 바뀌고 serverBinary 쪽은 덮어쓰지 않습니다.** 끝나면 원본·대상의 sha1을 보여 줍니다. |
-| **Stop** | `stop_wind_server.sh` 실행(tmux 세션 종료). |
-| **Run** | `run_gameserver.sh`를 실행하되 `WIND_HOME`을 배포 경로로 바꾸고 마지막 `tmux attach`는 뺍니다. 세션이 이미 있으면 거부하고, 끝나면 tmux 창 수와 wind/sessionServer 프로세스를 보여 줍니다. 서버 화면은 WSL 터미널에서 `attach_wind_server.sh`로 봅니다. |
+| **Stop** | `stop_wind_server.sh`처럼 tmux 세션(`wind`)을 종료합니다. 세션이 꺼지면 창의 셸이 띄운 서버도 함께 끝나고, 몇 초 뒤에도 남은 wind/sessionServer가 있으면 보여 줍니다. |
+| **Run** | `run_gameserver.sh`처럼 배포 경로에서 `logs/`를 비우고, tmux 세션에 창 6개(`wind0`·`wind1`·`wind2`·`session`·`wind11`·`wind12`)를 만들어 각 서버를 띄웁니다. 출력은 `logs/log.<창 이름>`에 남깁니다(wind 출력은 UTF-8로 변환). 세션이 이미 있으면 거부하고, 끝나면 tmux 창 수와 wind/sessionServer 프로세스를 보여 줍니다. |
+
+세션 이름이 같으므로 WSL에서 `stop_wind_server.sh`로 끄거나 `attach_wind_server.sh`로 서버 화면을 봐도 되고, 반대로 스크립트로 띄운 서버를 앱의 Stop으로 꺼도 됩니다.
 
 - 상태 칩(job 화면 왼쪽, Jobs 제목 옆): tmux 세션(`wind`)과 wind 프로세스 수를 20초마다, 그리고 Deploy / Run / Stop이 끝날 때마다 확인합니다(클릭하면 즉시). wind는 뜬 뒤 프로세스 이름을 `WindServer`로 바꾸므로 두 이름을 모두 셉니다. 세션은 있는데 wind가 없으면 `tmux 세션만 있음`으로 표시합니다.
 - 출력은 아래 패널에 실시간으로 나오고, 다른 화면에 갔다 와도 이어서 보입니다. 한 job에서는 한 번에 하나만, Deploy / Run / Stop은 서버를 공유하므로 모든 job을 통틀어 하나씩만 실행됩니다.
@@ -145,8 +147,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `codeCmd` | `code` | 에디터 명령 (`cursor`, `code-insiders` …) |
 | `deployRoot` | `~/wind/data` | WSL job의 기본 배포 경로(Deploy 대상, Run의 `WIND_HOME`). Settings에서 지정 |
 | `buildCmd` | `make` | Build가 job 폴더에서 실행하는 명령. Settings에서 지정 |
-| `serverScriptDir` | `~/script/local` | `stop_wind_server.sh` / `run_gameserver.sh`가 있는 폴더. Settings에서 지정 |
-| `serverSession` | `wind` | 서버 스크립트가 쓰는 tmux 세션 이름(상태 확인·중복 실행 검사용). Settings에서 지정 |
+| `serverSession` | `wind` | Run이 서버를 띄우고 Stop이 종료하는 tmux 세션 이름(상태 확인·중복 실행 검사에도 사용). Settings에서 지정 |
 | `logRoot` | `~/wind/data_local/logs` | Logs 탭의 기본 폴더(🏠 버튼). Settings에서 지정 |
 | `jobOrder` | (이름순) | 사이드바·Jobs 목록의 job 순서. 목록에 없는 job은 뒤에 이름순으로 붙음. Settings에서 지정 |
 

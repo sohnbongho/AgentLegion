@@ -75,8 +75,8 @@ namespace AgentLegion.Services
     }
 
     /// <summary>
-    /// Builds a WSL job (make in its folder), deploys its server binary, and starts / stops the game server through the
-    /// scripts in ~/script/local. Runs wsl.exe directly (not legion.ps1) so a build's output streams line by line and
+    /// Builds a WSL job (make in its folder), deploys its server binary, and starts / stops the game server in a tmux
+    /// session the way run_gameserver.sh / stop_wind_server.sh do. Runs wsl.exe directly (not legion.ps1) so a build's output streams line by line and
     /// non-ASCII compiler messages arrive as UTF-8. One action per job at a time; Deploy / Run / Stop touch the shared
     /// server, so only one of those runs at a time across all jobs.
     /// </summary>
@@ -196,15 +196,14 @@ namespace AgentLegion.Services
                 ["AL_DEST"] = dest,
                 ["AL_FILE"] = LegionConfig.DeployFile,
                 ["AL_BUILD_CMD"] = cfg.BuildCmd,
-                ["AL_SCRIPT_DIR"] = cfg.ServerScriptDir,
                 ["AL_SESSION"] = cfg.ServerSession,
             };
             var (script, detail) = action switch
             {
                 ServerAction.Build => (BuildScript, $"{folder} · {cfg.BuildCmd}"),
                 ServerAction.Deploy => (DeployScript, $"{folder}/{LegionConfig.DeployFile} → {dest}"),
-                ServerAction.Run => (RunScript, $"{cfg.ServerScriptDir}/run_gameserver.sh · {dest}"),
-                _ => (StopScript, $"{cfg.ServerScriptDir}/stop_wind_server.sh"),
+                ServerAction.Run => (RunScript, $"{dest} · tmux {cfg.ServerSession}"),
+                _ => (StopScript, $"tmux {cfg.ServerSession}"),
             };
 
             var run = new ServerOpRun(job.Job, action, detail);
@@ -394,41 +393,74 @@ namespace AgentLegion.Services
             fi
             """;
 
-        // run_gameserver.sh as the user keeps it, with WIND_HOME pointed at the deploy folder and without its final
-        // `tmux attach` (there is no terminal here). send-keys never fails, so check what actually came up: the servers
-        // run in the background of each window (every pane shows bash), so list the processes instead.
+        // Starts the servers the way run_gameserver.sh does, in the deploy folder: one tmux window per server, each running
+        // in the background of the window's shell with its output teed into logs/. The shells get SIGHUP when the session
+        // is killed and pass it on to their jobs, so stop_wind_server.sh run by hand stops these too. send-keys never
+        // fails, so check what actually came up: every pane shows bash, so list the processes instead.
         // wind renames its process to WindServer once it is up, so both names are matched.
         private const string RunScript = """
-            DIR=$(expand "$AL_SCRIPT_DIR"); DEST=$(expand "$AL_DEST")
-            S="$DIR/run_gameserver.sh"
-            [ -f "$S" ] || { echo "run script not found: $S" >&2; exit 1; }
+            DEST=$(expand "$AL_DEST")
             [ -d "$DEST" ] || { echo "server folder not found: $DEST" >&2; exit 1; }
+            [ -f "$DEST/$AL_FILE" ] || { echo "no server binary: $DEST/$AL_FILE - Deploy first" >&2; exit 1; }
             if tmux has-session -t "$AL_SESSION" 2>/dev/null; then
               echo "tmux session '$AL_SESSION' is already running - Stop it first" >&2; exit 1
             fi
-            TMP=$(mktemp); trap 'rm -f "$TMP"' EXIT
-            sed -e "s#^WIND_HOME=.*#WIND_HOME=\"$DEST\"#" -e '/^[[:space:]]*tmux[[:space:]]\{1,\}attach/d' "$S" > "$TMP"
-            echo "\$ $S  (WIND_HOME=$DEST, without tmux attach)"
-            bash "$TMP" </dev/null
+            cd "$DEST" || exit 1
+            echo "location: $PWD"
+            mkdir -p logs && rm -f logs/*
+            chmod +x "$AL_FILE"
+            ls -al "$AL_FILE"
+
+            # wind prints EUC-KR: convert each line to UTF-8 before tee (iconv would hold the output until the server exits)
+            TO_UTF8="perl -MEncode -pe 'BEGIN{\$|=1} \$_=encode(\"UTF-8\", decode(\"cp949\", \$_))'"
+
+            # start <window> <command> [raw]: opens the window and runs the command in the background of its shell,
+            # output (converted to UTF-8 unless raw) into logs/log.<window>
+            start() {
+              local w pipe="| $TO_UTF8 |"
+              [ "$3" = raw ] && pipe="|"
+              if tmux has-session -t "$AL_SESSION" 2>/dev/null; then
+                w=$(tmux new-window -P -F '#{window_id}' -t "$AL_SESSION" -n "$1" -c "$PWD")
+              else
+                w=$(tmux new-session -d -P -F '#{window_id}' -s "$AL_SESSION" -n "$1" -c "$PWD")
+              fi
+              [ -n "$w" ] || { echo "could not open tmux window $1" >&2; exit 1; }
+              echo "[$1] $2"
+              tmux send-keys -t "$w" "$2 2>&1 $pipe tee ./logs/log.$1 &" C-m
+            }
+
+            start wind0   "./wind -P -d 0 wind0"     # master
+            start wind1   "./wind -P -d 0 wind1"     # cache sync (Redis <-> DB)
+            start wind2   "./wind -P -d 0 wind2"     # login
+            start session "./sessionServer -d 0 --metrics=true --logoutput=console wind1000" raw
+            start wind11  "./wind -P -D -d 0 wind11" # local (game play)
+            start wind12  "./wind -P -d 0 wind12"
+
             sleep 2
             if ! tmux has-session -t "$AL_SESSION" 2>/dev/null; then
-              echo "tmux session '$AL_SESSION' is not running after the script" >&2; exit 1
+              echo "tmux session '$AL_SESSION' is not running after the start" >&2; exit 1
             fi
             echo "--- tmux session '$AL_SESSION': $(tmux list-windows -t "$AL_SESSION" | wc -l) windows ---"
             pgrep -a -x 'wind|WindServer'; pgrep -a -x sessionServer
             exit 0
             """;
 
+        // Like stop_wind_server.sh: kill the tmux session; the servers end with their shells.
         private const string StopScript = """
-            DIR=$(expand "$AL_SCRIPT_DIR")
-            S="$DIR/stop_wind_server.sh"
-            if [ -f "$S" ]; then
-              echo "\$ $S"
-              bash "$S" </dev/null
-            else
-              echo "stop script not found: $S - killing tmux session '$AL_SESSION'"
-              tmux kill-session -t "$AL_SESSION" 2>/dev/null || echo "tmux session '$AL_SESSION' does not exist."
+            if ! tmux has-session -t "$AL_SESSION" 2>/dev/null; then
+              echo "tmux session '$AL_SESSION' does not exist."; exit 0
             fi
+            echo "Stopping tmux session '$AL_SESSION'..."
+            tmux kill-session -t "$AL_SESSION" || exit 1
+            for i in 1 2 3 4 5; do
+              pgrep -x 'wind|WindServer|sessionServer' >/dev/null || break
+              sleep 1
+            done
+            echo "tmux session '$AL_SESSION' stopped."
+            if pgrep -x 'wind|WindServer|sessionServer' >/dev/null; then
+              echo "still running:"; pgrep -a -x 'wind|WindServer|sessionServer'
+            fi
+            exit 0
             """;
 
         // "running|stopped <windows> <wind processes>"
