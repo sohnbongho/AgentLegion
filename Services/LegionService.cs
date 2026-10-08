@@ -47,7 +47,7 @@ namespace AgentLegion.Services
         string? TerminalFontFamily = null, int TerminalFontSize = LegionConfig.DefaultTerminalFontSize,
         string DeployRoot = LegionConfig.DefaultDeployRoot, string BuildCmd = LegionConfig.DefaultBuildCmd,
         string ServerScriptDir = LegionConfig.DefaultServerScriptDir, string ServerSession = LegionConfig.DefaultServerSession,
-        string LogRoot = LegionConfig.DefaultLogRoot)
+        string LogRoot = LegionConfig.DefaultLogRoot, IReadOnlyList<string>? JobOrder = null)
     {
         public const int DefaultTerminalFontSize = 16;
         public const int MinTerminalFontSize = 8;
@@ -180,7 +180,10 @@ namespace AgentLegion.Services
                     string.IsNullOrEmpty(fontFamily) ? null : fontFamily, fontSize,
                     Or("deployRoot", LegionConfig.DefaultDeployRoot), Or("buildCmd", LegionConfig.DefaultBuildCmd),
                     Or("serverScriptDir", LegionConfig.DefaultServerScriptDir), Or("serverSession", LegionConfig.DefaultServerSession),
-                    Or("logRoot", LegionConfig.DefaultLogRoot));
+                    Or("logRoot", LegionConfig.DefaultLogRoot),
+                    root.TryGetProperty("jobOrder", out var jo) && jo.ValueKind == JsonValueKind.Array
+                        ? jo.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList()
+                        : null);
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -258,6 +261,21 @@ namespace AgentLegion.Services
                 if (string.IsNullOrEmpty(value) || value == LegionConfig.DefaultLogRoot) root.Remove("logRoot");
                 else root["logRoot"] = value;
             });
+        }
+
+        /// <summary>Saves the order of the job list (sidebar, Jobs page); an empty order means by name.</summary>
+        public CommandResult SaveJobOrder(IEnumerable<string> jobs) => UpdateConfig("Job 순서", root =>
+        {
+            var order = new JsonArray(jobs.Select(j => (JsonNode?)JsonValue.Create(j)).ToArray());
+            if (order.Count == 0) root.Remove("jobOrder");
+            else root["jobOrder"] = order;
+        });
+
+        /// <summary>A renamed job keeps its place in the saved order.</summary>
+        public CommandResult RenameInJobOrder(string oldName, string newName)
+        {
+            if (LoadConfig()?.JobOrder is not { } order || !order.Contains(oldName)) return new CommandResult(true, "");
+            return SaveJobOrder(order.Select(j => j == oldName ? newName : j));
         }
 
         // Edits legion.json in place, keeping the keys this app does not know about.

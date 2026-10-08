@@ -282,7 +282,7 @@ function Cmd-Init {
   if ($WindowsClaudeCmd) { $cfg['windowsClaudeCmd'] = $WindowsClaudeCmd.Trim() }
   elseif ($old -and $old.PSObject.Properties['windowsClaudeCmd']) { $cfg['windowsClaudeCmd'] = $old.windowsClaudeCmd }
   foreach ($k in 'stateDetection', 'resumeLastSession', 'codeCmd', 'terminalFontFamily', 'terminalFontSize',
-            'deployRoot', 'buildCmd', 'serverScriptDir', 'serverSession', 'logRoot') {
+            'deployRoot', 'buildCmd', 'serverScriptDir', 'serverSession', 'logRoot', 'jobOrder') {
     if ($old -and $old.PSObject.Properties[$k]) { $cfg[$k] = $old.$k }
   }
   $cfg | ConvertTo-Json | Set-Content $ConfigPath -Encoding UTF8

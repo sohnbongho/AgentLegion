@@ -147,6 +147,7 @@ exe를 어디에 두고 어떻게 실행하든(Visual Studio, `bin`의 exe, 배�
 | `serverScriptDir` | `~/script/local` | `stop_wind_server.sh` / `run_gameserver.sh`가 있는 폴더. Settings에서 지정 |
 | `serverSession` | `wind` | 서버 스크립트가 쓰는 tmux 세션 이름(상태 확인·중복 실행 검사용). Settings에서 지정 |
 | `logRoot` | `~/wind/data_local/logs` | Logs 탭의 기본 폴더(🏠 버튼). Settings에서 지정 |
+| `jobOrder` | (이름순) | 사이드바·Jobs 목록의 job 순서. 목록에 없는 job은 뒤에 이름순으로 붙음. Settings에서 지정 |
 
 ## CLI (`legion.ps1`)
 웹 UI가 내부에서 쓰는 스크립트이며 직접 실행할 수도 있습니다. `-Target windows`를 주지 않는 명령은 job이 있는 환경을 자동으로 찾습니다.

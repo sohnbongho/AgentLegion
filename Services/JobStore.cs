@@ -35,7 +35,7 @@ namespace AgentLegion.Services
             try
             {
                 var r = await _legion.GetJobsAsync();
-                Jobs = r.Jobs;
+                Jobs = Ordered(r.Jobs, _legion.LoadConfig()?.JobOrder);
                 Error = r.Error;
                 Loaded = true;
             }
@@ -44,6 +44,15 @@ namespace AgentLegion.Services
                 _refreshLock.Release();
             }
             Changed?.Invoke();
+        }
+
+        /// <summary>Jobs in the order saved in Settings; jobs not in it (new ones) follow by name.</summary>
+        public static IReadOnlyList<JobInfo> Ordered(IReadOnlyList<JobInfo> jobs, IReadOnlyList<string>? order)
+        {
+            if (order is not { Count: > 0 }) return jobs;
+            var rank = new Dictionary<string, int>();
+            for (var i = 0; i < order.Count; i++) rank.TryAdd(order[i], i);
+            return jobs.OrderBy(j => rank.TryGetValue(j.Job, out var r) ? r : int.MaxValue).ToList(); // stable: the rest stay by name
         }
     }
 }

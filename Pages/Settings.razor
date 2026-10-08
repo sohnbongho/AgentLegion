@@ -151,6 +151,46 @@
     </div>
 </div>
 
+<h2 class="h5 mt-4">Jobs 순서</h2>
+
+<div class="mb-3" style="max-width: 36rem;">
+    @if (!Store.Loaded)
+    {
+        <div class="form-text">job 목록을 불러오는 중...</div>
+    }
+    else if (jobOrder.Count == 0)
+    {
+        <div class="form-text">아직 job이 없습니다.</div>
+    }
+    else
+    {
+        <ol class="list-group list-group-numbered">
+            @for (var i = 0; i < jobOrder.Count; i++)
+            {
+                var index = i;
+                var j = jobOrder[i];
+                <li class="list-group-item d-flex align-items-center gap-2 py-1">
+                    <span class="me-auto">@j.Job</span>
+                    <span class="badge @(j.IsWindows ? "bg-info text-dark" : "bg-light text-dark border")">@(j.IsWindows ? "PowerShell" : "WSL")</span>
+                    <button class="btn btn-sm btn-outline-secondary py-0" title="위로" disabled="@(index == 0)" @onclick="() => MoveJob(index, -1)">
+                        <span class="oi oi-arrow-top" aria-hidden="true"></span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary py-0" title="아래로" disabled="@(index == jobOrder.Count - 1)" @onclick="() => MoveJob(index, 1)">
+                        <span class="oi oi-arrow-bottom" aria-hidden="true"></span>
+                    </button>
+                </li>
+            }
+        </ol>
+        <div class="d-flex align-items-start gap-2 mt-1">
+            <div class="form-text mt-0 me-auto">
+                사이드바와 Jobs 목록이 이 순서로 표시됩니다. Save를 눌러야 적용됩니다.
+                순서를 정한 뒤 새로 추가한 job은 맨 아래에 이름순으로 붙습니다.
+            </div>
+            <button class="btn btn-sm btn-link py-0 text-nowrap" @onclick="SortJobsByName">이름순으로</button>
+        </div>
+    }
+</div>
+
 <button class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(jobsRoot))" @onclick="SaveAsync">
     @(saving ? "Saving..." : "Save")
 </button>
@@ -190,6 +230,8 @@
     private string? serverScriptDir = LegionConfig.DefaultServerScriptDir;
     private string? serverSession = LegionConfig.DefaultServerSession;
     private string? logRoot = LegionConfig.DefaultLogRoot;
+    private List<JobInfo> jobOrder = new();
+    private bool jobOrderChanged; // untouched, nothing is saved: new jobs keep falling into name order
 
     private static readonly string[] fontSuggestions =
     {
@@ -227,7 +269,24 @@
             serverSession = cfg.ServerSession;
             logRoot = cfg.LogRoot;
         }
+        var loadJobs = Store.EnsureLoadedAsync();
         distros = await Legion.GetDistrosAsync();
+        await loadJobs;
+        jobOrder = Store.Jobs.ToList();
+    }
+
+    private void MoveJob(int index, int delta)
+    {
+        var to = index + delta;
+        if (to < 0 || to >= jobOrder.Count) return;
+        (jobOrder[index], jobOrder[to]) = (jobOrder[to], jobOrder[index]);
+        jobOrderChanged = true;
+    }
+
+    private void SortJobsByName()
+    {
+        jobOrder = jobOrder.OrderBy(j => j.Job, StringComparer.OrdinalIgnoreCase).ToList();
+        jobOrderChanged = true;
     }
 
     private async Task SaveAsync()
@@ -242,6 +301,13 @@
             if (result.Ok) result = Legion.SaveTerminalFont(termFontFamily, termFontSize);
             if (result.Ok) result = Legion.SaveServerSettings(deployRoot, buildCmd, serverScriptDir, serverSession);
             if (result.Ok) result = Legion.SaveLogRoot(logRoot);
+            if (result.Ok && jobOrderChanged)
+            {
+                // name order is the default, so it is saved as no order at all
+                var byName = jobOrder.Select(j => j.Job).SequenceEqual(jobOrder.Select(j => j.Job).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+                result = Legion.SaveJobOrder(byName ? Array.Empty<string>() : jobOrder.Select(j => j.Job));
+                if (result.Ok) jobOrderChanged = false;
+            }
             if (result.Ok) await Store.RefreshAsync(); // sidebar picks up the new config
         }
         finally
