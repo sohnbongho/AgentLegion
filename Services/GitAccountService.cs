@@ -5,17 +5,13 @@ using System.Text.RegularExpressions;
 
 namespace AgentLegion.Services
 {
-    /// <summary>The account git has stored for a host in each environment; null = none (or it could not be read).</summary>
-    public record GitAccountState(string? WslUser, string? WindowsUser, string? WindowsNote);
-
     /// <summary>
-    /// The HTTPS login git uses for the default repo's host (clone / pull / push of every job). The token goes straight
-    /// into git's own credential helper through stdin - it is never written to legion.json or put on a command line.
+    /// The HTTPS login git uses for a host (clone / pull / push), asked for when a command fails to log in. The token goes
+    /// straight into git's own credential helper through stdin - it is never written to legion.json or put on a command line.
     /// </summary>
     public class GitAccountService
     {
         private static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(20);
-        private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(45);
 
         private readonly LegionService _legion;
 
@@ -43,9 +39,14 @@ namespace AgentLegion.Services
 
         public static bool LooksLikeAuthFailure(string output) => AuthFailure.IsMatch(output);
 
-        /// <summary>The repo URL when it is reached over HTTP(S); null for ssh / scp-style / local paths (no login needed here).</summary>
-        public static Uri? HttpsRemote(string? repo) =>
-            Uri.TryCreate(repo?.Trim(), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp) ? u : null;
+        // git names the remote it could not log in to: "could not read Username for 'https://host'",
+        // "Authentication failed for 'https://host/group/repo.git/'"
+        private static readonly Regex FailedRemote = new(@"for '(https?://[^'\s]+)'", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>The HTTP(S) remote a failed command could not log in to, or null when it was not a login failure.</summary>
+        public static Uri? FailedLoginRemote(string output) =>
+            LooksLikeAuthFailure(output) && FailedRemote.Match(output) is { Success: true } m
+            && Uri.TryCreate(m.Groups[1].Value, UriKind.Absolute, out var u) ? u : null;
 
         // git credential's input: the host only (credential.useHttpPath is off by default), ending with a blank line
         private static string CredentialInput(Uri remote, string? user = null, string? password = null)
@@ -56,22 +57,17 @@ namespace AgentLegion.Services
             return sb.Append('\n').ToString();
         }
 
-        public async Task<GitAccountState> GetStateAsync(Uri remote)
-        {
-            var wsl = StoredUserAsync(true, remote);
-            var win = StoredUserAsync(false, remote);
-            var (w, n) = (await wsl, await win);
-            return new GitAccountState(w.User, n.User, n.Note);
-        }
+        /// <summary>The user name git already has for the host (WSL first, then Windows), to prefill the login form.</summary>
+        public async Task<string?> GetStoredUserAsync(Uri remote) =>
+            await StoredUserAsync(true, remote) ?? await StoredUserAsync(false, remote);
 
-        private async Task<(string? User, string? Note)> StoredUserAsync(bool wsl, Uri remote)
+        private async Task<string?> StoredUserAsync(bool wsl, Uri remote)
         {
             var r = await RunGitAsync(wsl, new[] { "credential", "fill" }, CredentialInput(remote), CallTimeout);
-            if (r.Exit == NotInstalled) return (null, "Windows에 git이 없습니다");
-            if (r.Exit != 0) return (null, null);
+            if (r.Exit != 0) return null;
             // only the user name is read; the password line is dropped here
             var user = r.Out.Split('\n').Select(l => l.TrimEnd('\r')).FirstOrDefault(l => l.StartsWith("username="))?["username=".Length..];
-            return (string.IsNullOrEmpty(user) ? null : user, null);
+            return string.IsNullOrEmpty(user) ? null : user;
         }
 
         /// <summary>Replaces the stored login for the repo's host in WSL and, when Windows has git, in Windows too.</summary>
@@ -121,45 +117,11 @@ namespace AgentLegion.Services
                     continue;
                 }
                 var stored = await StoredUserAsync(wsl, remote);
-                if (stored.User == user) lines.Add($"{label}: {user} 계정을 저장했습니다.");
+                if (stored == user) lines.Add($"{label}: {user} 계정을 저장했습니다.");
                 else
                 {
                     lines.Add($"{label}: 저장 명령은 성공했지만 다시 읽히지 않습니다 (credential helper: {helper.Out.Trim()}).");
                     ok = false;
-                }
-            }
-            return new CommandResult(ok, string.Join("\n", lines));
-        }
-
-        /// <summary>Forgets the stored login for the repo's host in both environments.</summary>
-        public async Task<CommandResult> DeleteAsync(Uri remote)
-        {
-            var lines = new List<string>();
-            foreach (var wsl in new[] { true, false })
-            {
-                var r = await RunGitAsync(wsl, new[] { "credential", "reject" }, CredentialInput(remote), CallTimeout);
-                if (r.Exit == NotInstalled) continue;
-                lines.Add($"{(wsl ? "WSL" : "Windows")}: {(r.Exit == 0 ? "삭제했습니다." : "삭제하지 못했습니다: " + FirstLine(r.Err))}");
-            }
-            return new CommandResult(true, string.Join("\n", lines));
-        }
-
-        /// <summary>Contacts the repo with the stored login (git ls-remote), from WSL and from Windows when it has git.</summary>
-        public async Task<CommandResult> TestAsync(Uri remote)
-        {
-            var lines = new List<string>();
-            var ok = true;
-            foreach (var wsl in new[] { true, false })
-            {
-                var r = await RunGitAsync(wsl, new[] { "ls-remote", remote.OriginalString, "HEAD" }, null, TestTimeout);
-                if (r.Exit == NotInstalled) continue;
-                var label = wsl ? "WSL" : "Windows";
-                if (r.Exit == 0) lines.Add($"{label}: 접속했습니다.");
-                else
-                {
-                    ok = false;
-                    var err = string.Join(" / ", r.Err.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).Take(3));
-                    lines.Add($"{label}: 실패 - {(LooksLikeAuthFailure(r.Err) ? "로그인 실패 (계정이 없거나 토큰이 만료됨). " : "")}{err}");
                 }
             }
             return new CommandResult(ok, string.Join("\n", lines));

@@ -588,10 +588,10 @@ namespace AgentLegion.Services
                 lines.Add(line);
         }
 
-        // git gives up instead of prompting (GIT_TERMINAL_PROMPT=0): point at where the login is entered
+        // git gives up instead of prompting (GIT_TERMINAL_PROMPT=0): say so in plain words (the Jobs page then asks for the login)
         private static string WithAuthHint(string output) =>
             GitAccountService.LooksLikeAuthFailure(output)
-                ? output + "\n\n→ git 로그인에 실패했습니다. Settings의 'Git 계정'에서 사용자 이름과 토큰(비밀번호)을 저장한 뒤 다시 시도하세요."
+                ? output + "\n\n→ git 로그인에 실패했습니다 (저장된 계정이 없거나 토큰이 만료됨)."
                 : output;
     }
 }

@@ -27,7 +27,7 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 ```
 1. **Settings**에서 WSL 배포판, jobs 폴더(기본 `~/agentjobs`), 기본 repo를 저장합니다. Windows job을 쓸 거면 *Jobs root (Windows PowerShell)*도 지정합니다(기본 `%USERPROFILE%\agentjobs`).
 2. **Jobs**에서 이름과 환경(*WSL* / *Windows PowerShell*)을 고르고 **Add**합니다. 브랜치·repo는 비우면 기본값(`agent/<이름>`, 기본 repo)을 씁니다. 추가하는 동안 단계(`[1/3]`…`[3/3]`)와 clone 진행률이 폼 아래에 실시간으로 표시됩니다.
-   - repo가 HTTPS면 git 로그인이 필요합니다. 앱은 git이 계정을 묻지 않고 바로 실패하게 실행하므로(묻는 창이 없어 멈추는 것을 방지), 계정이 없거나 토큰이 만료되면 Settings의 **Git 계정**에서 사용자 이름과 토큰을 저장합니다. 토큰은 legion.json에 남지 않고 git의 credential helper(WSL은 보통 `~/.git-credentials`, Windows는 Git Credential Manager)에 저장되며, **연결 확인**으로 `git ls-remote`를 시험할 수 있습니다.
+   - repo가 HTTPS면 git 로그인이 필요합니다. 앱은 git이 계정을 묻지 않고 바로 실패하게 실행하므로(묻는 창이 없어 멈추는 것을 방지), 계정이 없거나 토큰이 만료되어 Add나 Push가 실패하면 **Git 로그인** 창이 뜹니다. 사용자 이름과 토큰을 넣으면 git의 credential helper(WSL은 보통 `~/.git-credentials`, Windows는 Git Credential Manager)에 저장한 뒤 그 작업을 다시 실행합니다. 토큰은 legion.json에 남지 않습니다.
 3. 사이드바 **Agents**에서 job을 누르면 그 폴더에서 `claude`가 실행되는 터미널이 열립니다.
 
 첫 화면(**Dashboard**)에도 같은 안내가 있습니다.
@@ -41,7 +41,7 @@ dotnet run          # 또는 Visual Studio에서 실행 → http://localhost:516
 | Jobs | job 추가, 목록(Claude 이름·환경·브랜치·변경 수·세션 상태), Open / VS Code / Terminal / Edit / Diff / Push / Remove, (WSL job) 서버 Build / Deploy / Stop / Run, 서버 상태 칩 |
 | job 화면 (`/jobs/<job>`) | claude 터미널 + `Claude · <이름>` 배지 + 상단바 정보 + 같은 도구 버튼 + (WSL job) 서버 Build / Deploy / Stop / Run |
 | Redis (`/redis`) | Redis 연결(Host·Port·DB·Password)과 키 트리 탐색·값 확인을 한 화면에서. 값은 EUC-KR로 디코딩 |
-| Settings | WSL 배포판, jobs 폴더, 기본 repo, Git 계정(HTTPS 로그인), Windows jobs 폴더, job 터미널 글꼴·크기, 서버 빌드·배포(기본 배포 경로·빌드 명령·스크립트 폴더) |
+| Settings | WSL 배포판, jobs 폴더, 기본 repo, Windows jobs 폴더, job 터미널 글꼴·크기, 서버 빌드·배포(기본 배포 경로·빌드 명령·스크립트 폴더) |
 | 사이드바 | Agents 목록(상태 점·라벨·`PS`·`WSL` 태그·변경 수), 하단에 WSL 상태 |
 
 ### job 환경: WSL / Windows PowerShell
@@ -87,7 +87,7 @@ WSL 칩과 사이드바 하단에 마우스를 올리면 WSL 패키지 버전·O
   병합은 CLI의 `merge`를 씁니다.
 
 ### 서버 빌드 · 배포 · 실행 (WSL job)
-job 화면 터미널 위의 줄과 Jobs 목록의 **Server** 열에 있습니다(Windows job에는 없음). `~/script/local`의 서버 스크립트를 job 단위로 쓰도록 옮긴 것입니다. Jobs 목록의 Stop은 게임 서버 중지이고, Actions 열의 Stop(claude 세션 종료)과는 다릅니다. 배포 경로는 job 화면에서 바꾸며, Jobs 목록의 Deploy/Run도 그 경로를 씁니다(버튼에 마우스를 올리면 보임).
+job 화면 터미널 위의 줄에 있습니다(Windows job에는 없음). `~/script/local`의 서버 스크립트를 job 단위로 쓰도록 옮긴 것입니다. 배포 경로도 job 화면에서 바꿉니다.
 
 | 버튼 | 동작 |
 |---|---|
@@ -98,7 +98,7 @@ job 화면 터미널 위의 줄과 Jobs 목록의 **Server** 열에 있습니다
 | **Run** | `run_gameserver.sh`를 실행하되 `WIND_HOME`을 배포 경로로 바꾸고 마지막 `tmux attach`는 뺍니다. 세션이 이미 있으면 거부하고, 끝나면 tmux 창 수와 wind/sessionServer 프로세스를 보여 줍니다. 서버 화면은 WSL 터미널에서 `attach_wind_server.sh`로 봅니다. |
 
 - 상태 칩(job 화면 왼쪽, Jobs 제목 옆): tmux 세션(`wind`)과 wind 프로세스 수를 20초마다, 그리고 Deploy / Run / Stop이 끝날 때마다 확인합니다(클릭하면 즉시). wind는 뜬 뒤 프로세스 이름을 `WindServer`로 바꾸므로 두 이름을 모두 셉니다. 세션은 있는데 wind가 없으면 `tmux 세션만 있음`으로 표시합니다.
-- 출력은 아래 패널(Jobs 목록에서는 표 아래)에 실시간으로 나오고, 다른 화면에 갔다 와도 이어서 보입니다. 한 job에서는 한 번에 하나만, Deploy / Run / Stop은 서버를 공유하므로 모든 job을 통틀어 하나씩만 실행됩니다.
+- 출력은 아래 패널에 실시간으로 나오고, 다른 화면에 갔다 와도 이어서 보입니다. 한 job에서는 한 번에 하나만, Deploy / Run / Stop은 서버를 공유하므로 모든 job을 통틀어 하나씩만 실행됩니다.
 - 스크립트 폴더·tmux 세션 이름·빌드 명령은 Settings에서 바꿉니다. job별 배포 경로는 `deploy-targets.json`에 저장되고, Edit로 이름을 바꿔도 따라갑니다.
 
 ### Logs (로그 분석)

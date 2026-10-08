@@ -5,7 +5,7 @@
 @inject JobStore Store
 @inject SessionManager Sessions
 @inject NavigationManager Nav
-@inject ServerOpsService Ops
+@inject GitAccountService Git
 
 <PageTitle>Jobs - AgentLegion</PageTitle>
 
@@ -96,7 +96,7 @@ else
         <div class="table-responsive">
             <table class="table align-middle">
                 <thead>
-                    <tr><th>Job</th><th>Claude name</th><th>Env</th><th>Branch</th><th>Changes</th><th>Session</th><th title="게임 서버 빌드 · 배포 · 중지 · 실행 (WSL job)">Server</th><th class="text-end">Actions</th></tr>
+                    <tr><th>Job</th><th>Claude name</th><th>Env</th><th>Branch</th><th>Changes</th><th>Session</th><th class="text-end">Actions</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var j in Store.Jobs)
@@ -121,30 +121,6 @@ else
                             </td>
                             <td>
                                 <span class="badge @StateBadge(state)">@state.Label()</span>
-                            </td>
-                            <td class="text-nowrap">
-                                @if (!j.IsWindows)
-                                {
-                                    var opBusy = Ops.Get(j.Job) is { Running: true };
-                                    <div class="btn-group btn-group-sm" role="group" aria-label="@($"{j.Job} server")">
-                                        <button class="btn btn-outline-dark" disabled="@opBusy" @onclick="() => StartOp(j, ServerAction.Build)"
-                                                title="@($"job 폴더에서 {Ops.BuildCmd} 실행")">
-                                            <span class="oi oi-wrench" aria-hidden="true"></span> Build
-                                        </button>
-                                        <button class="btn btn-outline-primary" disabled="@opBusy" @onclick="() => StartOp(j, ServerAction.Deploy)"
-                                                title="@($"{LegionConfig.DeployFile}를 {Ops.GetDeployTarget(j.Job)} 로 복사 (경로는 job 화면에서 변경)")">
-                                            <span class="oi oi-data-transfer-upload" aria-hidden="true"></span> Deploy
-                                        </button>
-                                        <button class="btn btn-outline-danger" disabled="@opBusy" @onclick="() => StartOp(j, ServerAction.Stop)"
-                                                title="게임 서버 중지 - stop_wind_server.sh (claude 세션과 무관)">
-                                            <span class="oi oi-media-stop" aria-hidden="true"></span> Stop
-                                        </button>
-                                        <button class="btn btn-outline-success" disabled="@opBusy" @onclick="() => StartOp(j, ServerAction.Run)"
-                                                title="@($"게임 서버 실행 - run_gameserver.sh (서버 폴더: {Ops.GetDeployTarget(j.Job)})")">
-                                            <span class="oi oi-media-play" aria-hidden="true"></span> Run
-                                        </button>
-                                    </div>
-                                }
                             </td>
                             <td class="text-end text-nowrap">
                                 @if (busyJob == j.Job)
@@ -186,7 +162,6 @@ else
             </table>
         </div>
 
-        <ServerOpLog Job="@opJob" />
 
         @if (editingJob is not null && Store.Jobs.FirstOrDefault(x => x.Job == editingJob) is { } editing)
         {
@@ -206,6 +181,50 @@ else
             <button class="btn btn-sm btn-link" @onclick="() => result = null">Close</button>
         </div>
         <pre class="card-body mb-0" style="white-space: pre-wrap;">@(string.IsNullOrWhiteSpace(result.Output) ? "(no output)" : result.Output)</pre>
+    </div>
+}
+
+@if (login is { } prompt)
+{
+    <div class="modal d-block git-login" style="background: rgba(0, 0, 0, 0.45);" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="gitLoginTitle">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="gitLoginTitle">Git 로그인</h5>
+                    <button type="button" class="btn-close" aria-label="닫기" disabled="@prompt.Saving" @onclick="CancelLogin"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small">
+                        <code>@prompt.Remote.Scheme://@prompt.Remote.Authority</code>에 로그인하지 못했습니다 (저장된 계정이 없거나 토큰이 만료됨).
+                        계정을 입력하면 저장한 뒤 <strong>@prompt.Title</strong>을 다시 실행합니다.
+                    </p>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1" for="loginUser">사용자 이름</label>
+                        <input id="loginUser" class="form-control" @bind="prompt.User" @bind:event="oninput" autocomplete="off" spellcheck="false" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1" for="loginToken">토큰 (또는 비밀번호)</label>
+                        <input id="loginToken" type="password" class="form-control" @bind="prompt.Token" @bind:event="oninput" autocomplete="new-password" />
+                    </div>
+                    <div class="form-text">
+                        비밀번호보다 액세스 토큰(GitLab: <code>read_repository</code>, <code>write_repository</code> 권한)을 권장합니다.
+                        GitLab 토큰이면 사용자 이름은 <code>oauth2</code>여도 됩니다.
+                        토큰은 앱에 저장하지 않고 git의 credential helper(WSL은 보통 <code>~/.git-credentials</code>, Windows는 Git Credential Manager)에 넣습니다.
+                    </div>
+                    @if (prompt.Error is not null)
+                    {
+                        <div class="alert alert-danger py-2 mt-2 mb-0 small" role="alert" style="white-space: pre-wrap;">@prompt.Error</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline-secondary" disabled="@prompt.Saving" @onclick="CancelLogin">취소</button>
+                    <button class="btn btn-primary" disabled="@(prompt.Saving || string.IsNullOrWhiteSpace(prompt.User) || string.IsNullOrEmpty(prompt.Token))"
+                            @onclick="SaveLoginAsync">
+                        @(prompt.Saving ? "저장 중..." : "저장 후 다시 시도")
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 }
 
@@ -272,43 +291,11 @@ else
     private string? newClaudeName;
     private bool UsePath => !string.IsNullOrWhiteSpace(newPath);
 
-    private string? opJob;            // whose Build / Deploy / Run / Stop output is shown under the table
-    private string runningOps = "";   // jobs with a run in progress, to re-render only when that changes
-
     protected override async Task OnInitializedAsync()
     {
         Store.Changed += OnExternalChange;
         Sessions.Changed += OnExternalChange;
-        Ops.Changed += OnOpsChanged;
         if (!Store.Loaded) await RefreshAsync();
-        // back on the page while a build runs: show it again
-        opJob = Store.Jobs.FirstOrDefault(j => Ops.Get(j.Job) is { Running: true })?.Job;
-        runningOps = RunningOps();
-    }
-
-    private string RunningOps() => string.Join('|', Store.Jobs.Where(j => Ops.Get(j.Job) is { Running: true }).Select(j => j.Job));
-
-    // Output lines are rendered by the panel itself; the table only cares when a run starts or ends.
-    private void OnOpsChanged(string job)
-    {
-        if (disposed) return;
-        _ = InvokeAsync(() =>
-        {
-            var now = RunningOps();
-            if (disposed || now == runningOps) return;
-            runningOps = now;
-            StateHasChanged();
-        });
-    }
-
-    private void StartOp(JobInfo job, ServerAction action)
-    {
-        opJob = job.Job;
-        if (Ops.Start(job, action) is { } err)
-        {
-            result = new CommandResult(false, err);
-            resultTitle = $"{action} {job.Job}";
-        }
     }
 
     private void OnExternalChange()
@@ -327,7 +314,8 @@ else
         finally { loading = false; }
     }
 
-    private async Task RunAsync(string job, string action, Func<string, Task<CommandResult>> call)
+    /// <param name="retry">Runs the action again; given, a failed git login asks for the account and then retries.</param>
+    private async Task RunAsync(string job, string action, Func<string, Task<CommandResult>> call, Func<Task>? retry = null)
     {
         confirmRemove = null;
         busyJob = job;
@@ -341,12 +329,64 @@ else
         {
             busyJob = busyAction = null;
         }
+        if (retry is not null && result is { Ok: false } && GitAccountService.FailedLoginRemote(result.Output) is { } remote)
+            await AskLoginAsync(remote, $"{action} {job}", retry);
     }
 
     private Task CodeJob(string job) => RunAsync(job, "VS Code", Legion.OpenEditorAsync);
     private Task ShellJob(string job) => RunAsync(job, "Terminal", Legion.OpenTerminalAsync);
     private Task DiffJob(string job) => RunAsync(job, "Diff", Legion.DiffAsync);
-    private Task PushJob(string job) => RunAsync(job, "Push", Legion.PushAsync);
+    private Task PushJob(string job) => RunAsync(job, "Push", Legion.PushAsync, () => PushJob(job));
+
+    // ---- git login, asked for when a clone / pull / push could not log in ----
+    private sealed class LoginPrompt
+    {
+        public required Uri Remote { get; init; }
+        public required string Title { get; init; }
+        public required Func<Task> Retry { get; init; }
+        public string? User { get; set; }
+        public string? Token { get; set; }   // only held until it is handed to git
+        public bool Saving { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private LoginPrompt? login;
+
+    private async Task AskLoginAsync(Uri remote, string title, Func<Task> retry)
+    {
+        var prompt = new LoginPrompt { Remote = remote, Title = title, Retry = retry };
+        login = prompt;
+        StateHasChanged();
+        // the account git still has (its token expired, most likely) prefills the user name
+        var stored = await Git.GetStoredUserAsync(remote);
+        if (login == prompt && string.IsNullOrEmpty(prompt.User)) prompt.User = stored;
+    }
+
+    private void CancelLogin() => login = null;
+
+    private async Task SaveLoginAsync()
+    {
+        if (login is not { } prompt) return;
+        var token = prompt.Token ?? "";
+        prompt.Token = null;
+        prompt.Saving = true;
+        prompt.Error = null;
+        try
+        {
+            var r = await Git.SaveAsync(prompt.Remote, prompt.User ?? "", token);
+            if (!r.Ok)
+            {
+                prompt.Error = r.Output;
+                return;
+            }
+        }
+        finally
+        {
+            prompt.Saving = false;
+        }
+        login = null;
+        await prompt.Retry();
+    }
 
     private void StopSession(string job) => Sessions.Stop(job);
 
@@ -381,7 +421,8 @@ else
             addElapsed = $"{(DateTime.UtcNow - started).TotalSeconds:0}초";
             if (!disposed) StateHasChanged();
         }), null, 0, 1000);
-        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath, newClaudeName, OnAddLine));
+        await RunAsync(name, "Add", _ => Legion.AddJobAsync(name, newBranch, newRepo, newEnv == "windows", newPath, newClaudeName, OnAddLine),
+            AddJobAsync);
         if (result is { Ok: true })
         {
             newName = "";
@@ -409,6 +450,5 @@ else
         disposed = true;
         Store.Changed -= OnExternalChange;
         Sessions.Changed -= OnExternalChange;
-        Ops.Changed -= OnOpsChanged;
     }
 }
