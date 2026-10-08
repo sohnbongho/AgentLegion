@@ -6,6 +6,7 @@
 
 main {
     flex: 1;
+    min-width: 0; /* a long unwrapped log line must scroll inside its box, not widen the page */
 }
 
 .sidebar {
